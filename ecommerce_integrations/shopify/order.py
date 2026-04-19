@@ -29,12 +29,21 @@ DEFAULT_TAX_FIELDS = {
 }
 
 
+def get_active_shopify_sales_order_name(shopify_order_id: str) -> str | None:
+	"""Return a non-cancelled Sales Order linked to this Shopify order id, if any."""
+	return frappe.db.get_value(
+		"Sales Order",
+		{ORDER_ID_FIELD: shopify_order_id, "docstatus": ("!=", 2)},
+		"name",
+	)
+
+
 def sync_sales_order(payload, request_id=None):
 	order = payload
 	frappe.set_user("Administrator")
 	frappe.flags.request_id = request_id
 
-	if frappe.db.get_value("Sales Order", filters={ORDER_ID_FIELD: cstr(order["id"])}):
+	if get_active_shopify_sales_order_name(cstr(order["id"])):
 		create_shopify_log(status="Invalid", message="Sales order already exists, not synced")
 		return
 	try:
@@ -59,6 +68,129 @@ def sync_sales_order(payload, request_id=None):
 		create_shopify_log(status="Success")
 
 
+def sync_sales_order_updated(payload, request_id=None):
+	"""Handle Shopify ``orders/updated`` webhooks: amend draft SOs or replace submitted SOs when safe."""
+	order = payload
+	frappe.set_user("Administrator")
+	frappe.flags.request_id = request_id
+
+	if not order.get("id"):
+		create_shopify_log(status="Invalid", message=_("Missing Shopify order id"))
+		return
+
+	oid = cstr(order["id"])
+	so_name = get_active_shopify_sales_order_name(oid)
+	try:
+		if not so_name:
+			sync_sales_order(order, request_id=request_id)
+			return
+
+		so = frappe.get_doc("Sales Order", so_name)
+		setting = frappe.get_doc(SETTING_DOCTYPE)
+		if so.docstatus == 0:
+			_apply_draft_sales_order_update(so, order, setting)
+		elif so.docstatus == 1:
+			_apply_submitted_sales_order_update(so, order, setting)
+	except Exception as e:
+		create_shopify_log(status="Error", exception=e, rollback=True)
+	else:
+		create_shopify_log(status="Success")
+
+
+def _apply_draft_sales_order_update(so, shopify_order, setting):
+	shopify_customer = shopify_order.get("customer") if shopify_order.get("customer") is not None else {}
+	shopify_customer["billing_address"] = shopify_order.get("billing_address", "")
+	shopify_customer["shipping_address"] = shopify_order.get("shipping_address", "")
+	if shopify_customer.get("id"):
+		customer = ShopifyCustomer(customer_id=shopify_customer.get("id"))
+		if not customer.is_synced():
+			customer.sync_customer(customer=shopify_customer)
+		else:
+			customer.update_existing_addresses(shopify_customer)
+
+	create_items_if_not_exist(shopify_order)
+
+	items = get_order_items(
+		shopify_order.get("line_items"),
+		setting,
+		getdate(shopify_order.get("created_at")),
+		taxes_inclusive=shopify_order.get("taxes_included"),
+	)
+	if not items:
+		frappe.throw(_("Missing items for Shopify order update"))
+
+	taxes = get_order_taxes(shopify_order, setting, items)
+	for row in taxes:
+		tax_detail = row.get("item_wise_tax_detail")
+		if isinstance(tax_detail, dict):
+			row["item_wise_tax_detail"] = json.dumps(tax_detail)
+
+	while len(so.items):
+		so.remove(so.items[0])
+	for tax_row in list(so.taxes):
+		so.remove(tax_row)
+
+	customer = setting.default_customer
+	if shopify_order.get("customer", {}).get("id"):
+		customer = frappe.db.get_value("Customer", {CUSTOMER_ID_FIELD: shopify_order.get("customer", {}).get("id")}, "name")
+
+	so.customer = customer
+	so.transaction_date = getdate(shopify_order.get("created_at")) or nowdate()
+	so.delivery_date = getdate(shopify_order.get("created_at")) or nowdate()
+
+	for row in items:
+		so.append("items", row)
+	for row in taxes:
+		so.append("taxes", row)
+
+	so.flags.ignore_mandatory = True
+	so.flags.shopiy_order_json = json.dumps(shopify_order)
+	so.save(ignore_permissions=True)
+
+	if shopify_order.get("note"):
+		so.add_comment(text=f"Order Note: {shopify_order.get('note')}")
+
+
+def _apply_submitted_sales_order_update(so, shopify_order, setting):
+	order_id = shopify_order.get("id")
+	has_si = frappe.db.get_value(
+		"Sales Invoice",
+		{ORDER_ID_FIELD: order_id, "docstatus": ("<", 2)},
+		"name",
+	)
+	has_dn = frappe.db.get_value(
+		"Delivery Note",
+		{ORDER_ID_FIELD: order_id, "docstatus": ("<", 2)},
+		"name",
+	)
+	if has_si or has_dn:
+		frappe.db.set_value("Sales Order", so.name, ORDER_STATUS_FIELD, shopify_order.get("financial_status", ""))
+		so.add_comment(
+			text=_(
+				"Shopify order updated (orders/updated). Lines were not changed because a linked Sales Invoice or Delivery Note exists."
+			)
+		)
+		create_shopify_log(
+			status="Invalid",
+			message=_("Submitted Sales Order has linked SI/DN; synced status only."),
+		)
+		return
+
+	if flt(so.per_billed, 2) > 0 or flt(so.per_delivered, 2) > 0:
+		frappe.db.set_value("Sales Order", so.name, ORDER_STATUS_FIELD, shopify_order.get("financial_status", ""))
+		so.add_comment(
+			text=_("Shopify order updated; lines not changed because the order is partially billed or delivered.")
+		)
+		create_shopify_log(
+			status="Invalid",
+			message=_("Partially billed/delivered Sales Order; synced status only."),
+		)
+		return
+
+	so.cancel()
+	create_sales_order(shopify_order, setting)
+
+
 def create_order(order, setting, company=None):
 	# local import to avoid circular dependencies
 	from ecommerce_integrations.shopify.fulfillment import create_delivery_note
@@ -79,7 +211,7 @@ def create_sales_order(shopify_order, setting, company=None):
 		if customer_id := shopify_order.get("customer", {}).get("id"):
 			customer = frappe.db.get_value("Customer", {CUSTOMER_ID_FIELD: customer_id}, "name")
 
-	so = frappe.db.get_value("Sales Order", {ORDER_ID_FIELD: shopify_order.get("id")}, "name")
+	so = get_active_shopify_sales_order_name(str(shopify_order.get("id")))
 
 	if not so:
 		items = get_order_items(

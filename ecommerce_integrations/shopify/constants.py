@@ -10,6 +10,7 @@ API_VERSION = "2024-01"
 
 WEBHOOK_EVENTS = [
 	"orders/create",
+	"orders/updated",
 	"orders/paid",
 	"orders/fulfilled",
 	"orders/cancelled",
@@ -18,6 +19,7 @@ WEBHOOK_EVENTS = [
 
 EVENT_MAPPER = {
 	"orders/create": "ecommerce_integrations.shopify.order.sync_sales_order",
+	"orders/updated": "ecommerce_integrations.shopify.order.sync_sales_order_updated",
 	"orders/paid": "ecommerce_integrations.shopify.invoice.prepare_sales_invoice",
 	"orders/fulfilled": "ecommerce_integrations.shopify.fulfillment.prepare_delivery_note",
 	"orders/cancelled": "ecommerce_integrations.shopify.order.cancel_order",
