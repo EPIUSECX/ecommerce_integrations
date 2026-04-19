@@ -49,6 +49,7 @@
   "inventory_sync_section",
   "warehouse",
   "update_erpnext_stock_levels_to_shopify",
+  "push_fulfillment_to_shopify",
   "inventory_sync_frequency",
   "fetch_shopify_locations",
   "shopify_warehouse_mapping",
@@ -274,6 +275,14 @@
    "fieldname": "update_erpnext_stock_levels_to_shopify",
    "fieldtype": "Check",
    "label": "Update ERPNext stock levels to Shopify"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.enable_shopify",
+   "description": "When a Delivery Note is submitted, create a fulfillment in Shopify with tracking (LR No) and line items.",
+   "fieldname": "push_fulfillment_to_shopify",
+   "fieldtype": "Check",
+   "label": "Push Delivery Note fulfillments to Shopify"
   },
   {
    "default": "0",
