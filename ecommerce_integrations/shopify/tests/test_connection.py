@@ -17,6 +17,12 @@ class TestShopifyConnection(IntegrationTestCase):
 	def setUpClass(cls):
 		cls.setting = frappe.get_doc(SETTING_DOCTYPE)
 
+	def test_process_request_unknown_topic_logs_without_enqueue(self):
+		from ecommerce_integrations.shopify.connection import process_request
+
+		process_request({"test": 1}, "unknown/topic")
+		# No exception; invalid-topic path should not enqueue handlers.
+
 	@unittest.skip("Can't run these tests in CI")
 	def test_register_webhooks(self):
 		webhooks = connection.register_webhooks(

@@ -1,0 +1,48 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-04-19 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "autoname": "hash",
+ "engine": "InnoDB",
+ "field_order": [
+  "delivery_id",
+  "topic"
+ ],
+ "fields": [
+  {
+   "fieldname": "delivery_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Delivery ID",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "topic",
+   "fieldtype": "Data",
+   "label": "Topic",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-04-19 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Shopify",
+ "name": "Shopify Webhook Receipt",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

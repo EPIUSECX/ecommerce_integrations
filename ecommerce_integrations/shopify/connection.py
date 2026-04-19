@@ -6,6 +6,7 @@ import json
 
 import frappe
 from frappe import _
+from frappe.exceptions import DuplicateEntryError, UniqueValidationError
 from shopify.resources import Webhook
 from shopify.session import Session
 
@@ -100,17 +101,45 @@ def store_request_data() -> None:
 
 		data = json.loads(frappe.request.data)
 		event = frappe.request.headers.get("X-Shopify-Topic")
+		delivery_id = frappe.get_request_header("X-Shopify-Webhook-Id")
+
+		if not frappe.flags.in_test and delivery_id and not try_reserve_webhook_receipt(delivery_id, event):
+			return
 
 		process_request(data, event)
 
 
+def try_reserve_webhook_receipt(delivery_id: str, topic: str | None) -> bool:
+	"""Record webhook delivery id. Return False if this delivery was already processed (idempotent retry)."""
+	try:
+		frappe.get_doc(
+			{
+				"doctype": "Shopify Webhook Receipt",
+				"delivery_id": delivery_id,
+				"topic": topic or "",
+			}
+		).insert(ignore_permissions=True)
+	except (DuplicateEntryError, UniqueValidationError):
+		return False
+	return True
+
+
 def process_request(data, event):
+	handler = EVENT_MAPPER.get(event)
+	if not handler:
+		create_shopify_log(
+			status="Invalid",
+			request_data=data,
+			message=_("Unknown or unsupported Shopify webhook topic: {0}").format(event or ""),
+		)
+		return
+
 	# create log
-	log = create_shopify_log(method=EVENT_MAPPER[event], request_data=data)
+	log = create_shopify_log(method=handler, request_data=data)
 
 	# enqueue backround job
 	frappe.enqueue(
-		method=EVENT_MAPPER[event],
+		method=handler,
 		queue="short",
 		timeout=300,
 		is_async=True,
