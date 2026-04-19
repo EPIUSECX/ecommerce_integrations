@@ -16,6 +16,7 @@ from ecommerce_integrations.shopify.constants import (
 	ORDER_NUMBER_FIELD,
 	ORDER_STATUS_FIELD,
 	SETTING_DOCTYPE,
+	SHOPIFY_LINE_ITEM_ID_FIELD,
 )
 from ecommerce_integrations.shopify.customer import ShopifyCustomer
 from ecommerce_integrations.shopify.product import create_items_if_not_exist, get_item_code
@@ -283,20 +284,21 @@ def get_order_items(order_items, setting, delivery_date, taxes_inclusive):
 
 		if all_product_exists:
 			item_code = get_item_code(shopify_item)
-			items.append(
-				{
-					"item_code": item_code,
-					"item_name": shopify_item.get("name"),
-					"rate": _get_item_price(shopify_item, taxes_inclusive),
-					"delivery_date": delivery_date,
-					"qty": shopify_item.get("quantity"),
-					"stock_uom": shopify_item.get("uom") or "Nos",
-					"warehouse": setting.warehouse,
-					ORDER_ITEM_DISCOUNT_FIELD: (
-						_get_total_discount(shopify_item) / cint(shopify_item.get("quantity"))
-					),
-				}
-			)
+			row = {
+				"item_code": item_code,
+				"item_name": shopify_item.get("name"),
+				"rate": _get_item_price(shopify_item, taxes_inclusive),
+				"delivery_date": delivery_date,
+				"qty": shopify_item.get("quantity"),
+				"stock_uom": shopify_item.get("uom") or "Nos",
+				"warehouse": setting.warehouse,
+				ORDER_ITEM_DISCOUNT_FIELD: (
+					_get_total_discount(shopify_item) / cint(shopify_item.get("quantity"))
+				),
+			}
+			if frappe.get_meta("Sales Order Item").has_field(SHOPIFY_LINE_ITEM_ID_FIELD) and shopify_item.get("id"):
+				row[SHOPIFY_LINE_ITEM_ID_FIELD] = str(shopify_item.get("id"))
+			items.append(row)
 		else:
 			items = []
 

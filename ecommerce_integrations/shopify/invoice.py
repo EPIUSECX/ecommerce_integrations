@@ -6,6 +6,7 @@ from ecommerce_integrations.shopify.constants import (
 	ORDER_ID_FIELD,
 	ORDER_NUMBER_FIELD,
 	SETTING_DOCTYPE,
+	SHOPIFY_LINE_ITEM_ID_FIELD,
 )
 from ecommerce_integrations.shopify.utils import create_shopify_log
 
@@ -48,6 +49,12 @@ def create_sales_invoice(shopify_order, setting, so):
 		sales_invoice.naming_series = setting.sales_invoice_series or "SI-Shopify-"
 		sales_invoice.flags.ignore_mandatory = True
 		set_cost_center(sales_invoice.items, setting.cost_center)
+		for si_item in sales_invoice.items:
+			if not si_item.so_detail:
+				continue
+			slid = frappe.db.get_value("Sales Order Item", si_item.so_detail, SHOPIFY_LINE_ITEM_ID_FIELD)
+			if slid:
+				si_item.set(SHOPIFY_LINE_ITEM_ID_FIELD, slid)
 		sales_invoice.insert(ignore_mandatory=True)
 		sales_invoice.submit()
 		if sales_invoice.grand_total > 0:

@@ -15,6 +15,7 @@ WEBHOOK_EVENTS = [
 	"orders/fulfilled",
 	"orders/cancelled",
 	"orders/partially_fulfilled",
+	"refunds/create",
 ]
 
 EVENT_MAPPER = {
@@ -24,6 +25,7 @@ EVENT_MAPPER = {
 	"orders/fulfilled": "ecommerce_integrations.shopify.fulfillment.prepare_delivery_note",
 	"orders/cancelled": "ecommerce_integrations.shopify.order.cancel_order",
 	"orders/partially_fulfilled": "ecommerce_integrations.shopify.fulfillment.prepare_delivery_note",
+	"refunds/create": "ecommerce_integrations.shopify.refund.sync_refund",
 }
 
 SHOPIFY_VARIANTS_ATTR_LIST = ["option1", "option2", "option3"]
@@ -38,6 +40,8 @@ FULLFILLMENT_ID_FIELD = "shopify_fulfillment_id"
 SUPPLIER_ID_FIELD = "shopify_supplier_id"
 ADDRESS_ID_FIELD = "shopify_address_id"
 ORDER_ITEM_DISCOUNT_FIELD = "shopify_item_discount"
+SHOPIFY_LINE_ITEM_ID_FIELD = "shopify_line_item_id"
+SHOPIFY_REFUND_ID_FIELD = "shopify_refund_id"
 ITEM_SELLING_RATE_FIELD = "shopify_selling_rate"
 
 # ERPNext already defines the default UOMs from Shopify but names are different

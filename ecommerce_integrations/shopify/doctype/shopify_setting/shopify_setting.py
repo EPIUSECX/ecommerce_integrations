@@ -23,6 +23,8 @@ from ecommerce_integrations.shopify.constants import (
 	ORDER_ITEM_DISCOUNT_FIELD,
 	ORDER_NUMBER_FIELD,
 	ORDER_STATUS_FIELD,
+	SHOPIFY_LINE_ITEM_ID_FIELD,
+	SHOPIFY_REFUND_ID_FIELD,
 	SUPPLIER_ID_FIELD,
 )
 from ecommerce_integrations.shopify.utils import (
@@ -180,6 +182,24 @@ def setup_custom_fields():
 				insert_after="discount_and_margin",
 				read_only=1,
 			),
+			dict(
+				fieldname=SHOPIFY_LINE_ITEM_ID_FIELD,
+				label="Shopify Line Item Id",
+				fieldtype="Data",
+				insert_after=ORDER_ITEM_DISCOUNT_FIELD,
+				read_only=1,
+				print_hide=1,
+			),
+		],
+		"Sales Invoice Item": [
+			dict(
+				fieldname=SHOPIFY_LINE_ITEM_ID_FIELD,
+				label="Shopify Line Item Id",
+				fieldtype="Data",
+				insert_after="item_code",
+				read_only=1,
+				print_hide=1,
+			),
 		],
 		"Delivery Note": [
 			dict(
@@ -237,6 +257,14 @@ def setup_custom_fields():
 				label="Shopify Order Status",
 				fieldtype="Small Text",
 				insert_after=ORDER_ID_FIELD,
+				read_only=1,
+				print_hide=1,
+			),
+			dict(
+				fieldname=SHOPIFY_REFUND_ID_FIELD,
+				label="Shopify Refund Id",
+				fieldtype="Data",
+				insert_after=ORDER_STATUS_FIELD,
 				read_only=1,
 				print_hide=1,
 			),
