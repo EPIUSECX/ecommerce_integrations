@@ -6,6 +6,7 @@ from frappe import _
 from frappe.integrations.utils import make_request
 from frappe.utils import cint
 
+from ecommerce_integrations.shopify.connection import get_shopify_access_token, handle_shopify_api_auth_error
 from ecommerce_integrations.shopify.constants import (
 	API_VERSION,
 	ORDER_ID_FIELD,
@@ -82,7 +83,10 @@ def push_shopify_fulfillment_for_delivery_note(delivery_note_name: str) -> None:
 		create_shopify_log(status="Error", message=_("Could not resolve Shopify location for fulfillment."))
 		return
 
-	token = setting.get_password("password")
+	token = get_shopify_access_token(setting)
+	if not token:
+		create_shopify_log(status="Invalid", message=_("Shopify access token is not configured."))
+		return
 	url = f"https://{setting.shopify_url.rstrip('/')}/admin/api/{API_VERSION}/orders/{order_id}/fulfillments.json"
 	headers = {
 		"X-Shopify-Access-Token": token,
@@ -101,6 +105,7 @@ def push_shopify_fulfillment_for_delivery_note(delivery_note_name: str) -> None:
 	try:
 		make_request("POST", url, headers=headers, json=payload)
 	except Exception as e:
+		handle_shopify_api_auth_error(e)
 		create_shopify_log(status="Error", exception=e)
 		return
 

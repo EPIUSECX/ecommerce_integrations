@@ -32,6 +32,17 @@ $ bench --site sitename install-app ecommerce_integrations
 
 After installation follow user documentation for each integration to set it up.
 
+### Shopify OAuth (Partner / managed install)
+
+You can connect **Shopify Setting** using **OAuth** instead of pasting an Admin API access token:
+
+1. In the **Partner Dashboard** (or `shopify.app.toml`), set **`[auth].redirect_urls`** to exactly:
+   `https://<your-site>/api/method/ecommerce_integrations.shopify.oauth.shopify_oauth_callback`
+2. Set **`[access_scopes].scopes`** to match (or be a superset of) the scopes in `SHOPIFY_OAUTH_SCOPES` in [`ecommerce_integrations/shopify/constants.py`](ecommerce_integrations/shopify/constants.py).
+3. In ERPNext **Shopify Setting**: enable Shopify, set **Authentication method** to **OAuth**, enter **Shop URL**, **Client ID**, and **API Secret** (same secret used for webhook HMAC), then click **Connect with Shopify** and approve the app.
+4. **Offline** Admin tokens do not require a periodic refresh job; if Shopify returns **401**, status becomes **Needs Reconnection**—update the token or run **Connect with Shopify** again.
+5. **Manual** authentication (paste access token) remains supported for store **Develop apps** or legacy setups.
+
 ### Contributing
 
 - Follow general [ERPNext contribution guideline](https://github.com/frappe/erpnext/wiki/Contribution-Guidelines)

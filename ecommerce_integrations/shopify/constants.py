@@ -46,3 +46,16 @@ ITEM_SELLING_RATE_FIELD = "shopify_selling_rate"
 
 # ERPNext already defines the default UOMs from Shopify but names are different
 WEIGHT_TO_ERPNEXT_UOM_MAP = {"kg": "Kg", "g": "Gram", "oz": "Ounce", "lb": "Pound"}
+
+# Comma-separated Admin API scopes for OAuth authorize URL (align with Partner app / shopify.app.toml).
+SHOPIFY_OAUTH_SCOPES = (
+	"read_orders,write_orders,read_customers,write_customers,read_products,write_products,"
+	"read_inventory,write_inventory,read_locations,read_fulfillments,write_fulfillments"
+)
+
+AUTH_METHOD_MANUAL = "Manual"
+AUTH_METHOD_OAUTH = "OAuth"
+
+CONNECTION_STATUS_NOT_CONNECTED = "Not Connected"
+CONNECTION_STATUS_CONNECTED = "Connected"
+CONNECTION_STATUS_NEEDS_RECONNECTION = "Needs Reconnection"

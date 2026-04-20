@@ -13,6 +13,29 @@ frappe.ui.form.on("Shopify Setting", {
 				});
 			},
 		});
+		const params = new URLSearchParams(window.location.search || "");
+		const oauth = params.get("shopify_oauth");
+		if (oauth === "success") {
+			frappe.show_alert({ message: __("Shopify connected successfully."), indicator: "green" });
+			window.history.replaceState({}, document.title, window.location.pathname);
+		} else if (oauth === "error") {
+			const msg = params.get("shopify_oauth_message") || __("OAuth failed");
+			frappe.msgprint({ title: __("Shopify OAuth"), message: msg, indicator: "red" });
+			window.history.replaceState({}, document.title, window.location.pathname);
+		}
+	},
+
+	connect_with_shopify: function (frm) {
+		frappe.call({
+			method: "ecommerce_integrations.shopify.oauth.shopify_oauth_start",
+			freeze: true,
+			freeze_message: __("Redirecting to Shopify…"),
+			callback: function (r) {
+				if (!r.exc && r.message) {
+					window.location.href = r.message;
+				}
+			},
+		});
 	},
 
 	fetch_shopify_locations: function (frm) {

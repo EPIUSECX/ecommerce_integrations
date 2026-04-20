@@ -16,6 +16,11 @@ from ecommerce_integrations.controllers.setting import (
 from ecommerce_integrations.shopify import connection
 from ecommerce_integrations.shopify.constants import (
 	ADDRESS_ID_FIELD,
+	AUTH_METHOD_MANUAL,
+	AUTH_METHOD_OAUTH,
+	CONNECTION_STATUS_CONNECTED,
+	CONNECTION_STATUS_NEEDS_RECONNECTION,
+	CONNECTION_STATUS_NOT_CONNECTED,
 	CUSTOMER_ID_FIELD,
 	FULLFILLMENT_ID_FIELD,
 	ITEM_SELLING_RATE_FIELD,
@@ -40,8 +45,23 @@ class ShopifySetting(SettingController):
 	def validate(self):
 		ensure_old_connector_is_disabled()
 
+		if not self.auth_method:
+			self.auth_method = AUTH_METHOD_MANUAL
+
 		if self.shopify_url:
 			self.shopify_url = self.shopify_url.replace("https://", "")
+
+		if self.enable_shopify:
+			if self.auth_method == AUTH_METHOD_MANUAL and not self.get_password("password"):
+				frappe.throw(_("Password / Access Token is required for Manual authentication."))
+			if self.auth_method == AUTH_METHOD_OAUTH:
+				if not self.client_id:
+					frappe.throw(_("Client ID is required for OAuth authentication."))
+				if not self.shared_secret:
+					frappe.throw(
+						_("API Secret (Shared secret) is required for OAuth and webhook verification.")
+					)
+
 		self._handle_webhooks()
 		self._validate_warehouse_links()
 		self._initalize_default_values()
@@ -49,13 +69,32 @@ class ShopifySetting(SettingController):
 		if self.is_enabled():
 			setup_custom_fields()
 
+		self._sync_connection_status_display()
+
+	def _sync_connection_status_display(self) -> None:
+		token = connection.get_shopify_access_token(self)
+		if not self.enable_shopify:
+			return
+		if self.auth_method == AUTH_METHOD_OAUTH and not token:
+			self.shopify_connection_status = CONNECTION_STATUS_NOT_CONNECTED
+		elif token and self.webhooks and (
+			self.shopify_connection_status != CONNECTION_STATUS_NEEDS_RECONNECTION
+			or getattr(self.flags, "shopify_webhooks_registered_now", False)
+		):
+			self.shopify_connection_status = CONNECTION_STATUS_CONNECTED
+
 	def on_update(self):
 		if self.is_enabled() and not self.is_old_data_migrated:
 			migrate_from_old_connector()
 
 	def _handle_webhooks(self):
+		token = connection.get_shopify_access_token(self)
 		if self.is_enabled() and not self.webhooks:
-			new_webhooks = connection.register_webhooks(self.shopify_url, self.get_password("password"))
+			if not token:
+				# OAuth: user must complete Connect before webhooks can be registered.
+				return
+
+			new_webhooks = connection.register_webhooks(self.shopify_url, token)
 
 			if not new_webhooks:
 				msg = _("Failed to register webhooks with Shopify.") + "<br>"
@@ -66,8 +105,12 @@ class ShopifySetting(SettingController):
 			for webhook in new_webhooks:
 				self.append("webhooks", {"webhook_id": webhook.id, "method": webhook.topic})
 
+			self.flags.shopify_webhooks_registered_now = True
+			self.shopify_connection_status = CONNECTION_STATUS_CONNECTED
+
 		elif not self.is_enabled():
-			connection.unregister_webhooks(self.shopify_url, self.get_password("password"))
+			if token:
+				connection.unregister_webhooks(self.shopify_url, token)
 
 			self.webhooks = list()  # remove all webhooks
 

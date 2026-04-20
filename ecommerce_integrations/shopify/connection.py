@@ -6,17 +6,66 @@ import json
 
 import frappe
 from frappe import _
+from frappe.utils import cstr
 from frappe.exceptions import DuplicateEntryError, UniqueValidationError
 from shopify.resources import Webhook
 from shopify.session import Session
 
 from ecommerce_integrations.shopify.constants import (
 	API_VERSION,
+	CONNECTION_STATUS_NEEDS_RECONNECTION,
 	EVENT_MAPPER,
 	SETTING_DOCTYPE,
 	WEBHOOK_EVENTS,
 )
 from ecommerce_integrations.shopify.utils import create_shopify_log
+
+
+def get_shopify_access_token(setting=None):
+	"""Return the Admin API access token for Shopify, or None if missing."""
+	doc = setting or frappe.get_doc(SETTING_DOCTYPE)
+	if not doc.is_enabled():
+		return None
+	token = doc.get_password("password")
+	return token or None
+
+
+def mark_shopify_connection_needs_reconnection(message: str | None = None) -> None:
+	"""Mark integration as needing re-auth after Shopify returns 401 / unauthorized."""
+	if not frappe.db.exists(SETTING_DOCTYPE, SETTING_DOCTYPE):
+		return
+	frappe.db.set_single_value(
+		SETTING_DOCTYPE,
+		"shopify_connection_status",
+		CONNECTION_STATUS_NEEDS_RECONNECTION,
+		update_modified=False,
+	)
+	if message:
+		create_shopify_log(status="Error", message=message)
+
+
+def handle_shopify_api_auth_error(exc: BaseException) -> None:
+	"""If exception indicates Shopify auth failure, update connection status (no secrets in logs)."""
+	if _is_shopify_unauthorized_error(exc):
+		mark_shopify_connection_needs_reconnection(
+			_("Shopify returned an authentication error. Reconnect or update the access token in Shopify Setting.")
+		)
+
+
+def _is_shopify_unauthorized_error(exc: BaseException) -> bool:
+	try:
+		from pyactiveresource.connection import UnauthorizedAccess
+
+		if isinstance(exc, UnauthorizedAccess):
+			return True
+	except Exception:
+		frappe.clear_last_message()
+
+	resp = getattr(exc, "response", None)
+	code = getattr(resp, "status_code", None) if resp is not None else None
+	if code == 401:
+		return True
+	return "401" in cstr(exc)
 
 
 def temp_shopify_session(func):
@@ -30,10 +79,18 @@ def temp_shopify_session(func):
 
 		setting = frappe.get_doc(SETTING_DOCTYPE)
 		if setting.is_enabled():
-			auth_details = (setting.shopify_url, API_VERSION, setting.get_password("password"))
-
-			with Session.temp(*auth_details):
-				return func(*args, **kwargs)
+			token = get_shopify_access_token(setting)
+			if not token:
+				frappe.throw(
+					_("Configure Shopify authentication (OAuth or access token) before using this action.")
+				)
+			auth_details = (setting.shopify_url, API_VERSION, token)
+			try:
+				with Session.temp(*auth_details):
+					return func(*args, **kwargs)
+			except Exception as e:
+				handle_shopify_api_auth_error(e)
+				raise
 
 	return wrapper
 

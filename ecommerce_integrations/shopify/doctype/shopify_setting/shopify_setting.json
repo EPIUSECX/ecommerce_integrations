@@ -10,8 +10,12 @@
   "section_break_2",
   "shopify_url",
   "column_break_3",
+  "auth_method",
+  "shopify_connection_status",
+  "client_id",
   "password",
   "shared_secret",
+  "connect_with_shopify",
   "section_break_4",
   "webhooks",
   "customer_settings_section",
@@ -90,16 +94,48 @@
    "fieldtype": "Column Break"
   },
   {
+   "default": "Manual",
+   "description": "Manual: paste Admin API access token. OAuth: connect via Shopify (recommended for Partner apps).",
+   "fieldname": "auth_method",
+   "fieldtype": "Select",
+   "label": "Authentication method",
+   "options": "Manual\nOAuth"
+  },
+  {
+   "default": "Not Connected",
+   "depends_on": "eval:doc.enable_shopify",
+   "fieldname": "shopify_connection_status",
+   "fieldtype": "Select",
+   "label": "Connection status",
+   "options": "Not Connected\nConnected\nNeeds Reconnection",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.enable_shopify && doc.auth_method=='OAuth'",
+   "description": "Shopify app Client ID (API key) from Partner Dashboard or shopify.app.toml.",
+   "fieldname": "client_id",
+   "fieldtype": "Data",
+   "label": "Client ID",
+   "mandatory_depends_on": "eval:doc.enable_shopify && doc.auth_method=='OAuth'"
+  },
+  {
    "fieldname": "password",
    "fieldtype": "Password",
    "label": "Password / Access Token",
-   "mandatory_depends_on": "eval:doc.enable_shopify"
+   "mandatory_depends_on": "eval:doc.enable_shopify && doc.auth_method=='Manual'"
   },
   {
+   "description": "Webhook HMAC verification and OAuth client secret (Partner app API secret).",
    "fieldname": "shared_secret",
    "fieldtype": "Data",
    "label": "Shared secret / API Secret",
    "mandatory_depends_on": "eval:doc.enable_shopify"
+  },
+  {
+   "depends_on": "eval:doc.enable_shopify && doc.auth_method=='OAuth'",
+   "fieldname": "connect_with_shopify",
+   "fieldtype": "Button",
+   "label": "Connect with Shopify"
   },
   {
    "collapsible": 1,
