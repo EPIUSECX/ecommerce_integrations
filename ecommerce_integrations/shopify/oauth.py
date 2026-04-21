@@ -185,15 +185,7 @@ def _exchange_and_persist_token(*, code: str, shop: str) -> None:
 
 	frappe.set_user("Administrator")
 	try:
-		password.set_encrypted_password(SETTING_DOCTYPE, SETTING_DOCTYPE, access_token, fieldname="password")
-		frappe.db.set_single_value(
-			SETTING_DOCTYPE,
-			{
-				"auth_method": AUTH_METHOD_OAUTH,
-				"shopify_connection_status": CONNECTION_STATUS_CONNECTED,
-			},
-			update_modified=False,
-		)
+		connection._persist_shopify_access_token(access_token, auth_method=AUTH_METHOD_OAUTH)
 
 		doc = frappe.get_doc(SETTING_DOCTYPE)
 		if not doc.webhooks:

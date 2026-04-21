@@ -17,6 +17,8 @@ from shopify.session import Session
 from ecommerce_integrations.shopify.constants import (
 	API_VERSION,
 	AUTH_METHOD_CLIENT_CREDENTIALS,
+	AUTH_METHOD_OAUTH,
+	CONNECTION_STATUS_CONNECTED,
 	CONNECTION_STATUS_NEEDS_RECONNECTION,
 	EVENT_MAPPER,
 	SETTING_DOCTYPE,
@@ -54,6 +56,7 @@ def has_configured_shopify_auth(setting=None) -> bool:
 def _get_client_credentials_access_token(setting, *, allow_refresh: bool = True) -> str | None:
 	cached_token = _get_cached_client_credentials_token()
 	if cached_token:
+		_persist_shopify_access_token(cached_token, auth_method=AUTH_METHOD_CLIENT_CREDENTIALS)
 		return cached_token
 
 	stored_token = None
@@ -78,8 +81,16 @@ def _get_client_credentials_access_token(setting, *, allow_refresh: bool = True)
 		client_secret=client_secret,
 	)
 	_store_client_credentials_token(token=token, expires_in=expires_in)
-	password.set_encrypted_password(SETTING_DOCTYPE, SETTING_DOCTYPE, token, fieldname="password")
+	_persist_shopify_access_token(token, auth_method=AUTH_METHOD_CLIENT_CREDENTIALS)
 	return token
+
+
+def _persist_shopify_access_token(token: str, *, auth_method: str | None = None) -> None:
+	password.set_encrypted_password(SETTING_DOCTYPE, SETTING_DOCTYPE, token, fieldname="password")
+	values = {"shopify_connection_status": CONNECTION_STATUS_CONNECTED}
+	if auth_method:
+		values["auth_method"] = auth_method
+	frappe.db.set_single_value(SETTING_DOCTYPE, values, update_modified=False)
 
 
 def _get_cached_client_credentials_token() -> str | None:
@@ -223,6 +234,7 @@ def test_shopify_connection() -> dict:
 	token = get_shopify_access_token(doc)
 	if not token:
 		frappe.throw(_("Unable to obtain a Shopify access token with the current settings."))
+	_persist_shopify_access_token(token, auth_method=doc.auth_method)
 
 	resp = requests.get(
 		f"https://{doc.shopify_url}/admin/api/{API_VERSION}/shop.json",
