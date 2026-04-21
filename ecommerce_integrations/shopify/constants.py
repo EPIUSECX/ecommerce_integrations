@@ -60,3 +60,6 @@ AUTH_METHOD_OAUTH = "OAuth"
 CONNECTION_STATUS_NOT_CONNECTED = "Not Connected"
 CONNECTION_STATUS_CONNECTED = "Connected"
 CONNECTION_STATUS_NEEDS_RECONNECTION = "Needs Reconnection"
+
+EXPORT_PRODUCTS_JOB_NAME = "shopify.job.export.all.products"
+EXPORT_PRODUCTS_REALTIME_KEY = "shopify.key.export.all.products"

@@ -69,6 +69,32 @@ frappe.ui.form.on("Shopify Setting", {
 		frm.add_custom_button(__("Import Products"), function () {
 			frappe.set_route("shopify-import-products");
 		});
+		frm.add_custom_button(__("Export Products"), () => {
+			const start_export = () => {
+				frappe.call({
+					method: "ecommerce_integrations.shopify.product.export_all_products",
+					freeze: true,
+					freeze_message: __("Queuing ERPNext product export…"),
+					callback: function (r) {
+						if (!r.exc) {
+							frappe.show_alert(
+								{
+									message: __("ERPNext product export queued. Check View Logs for progress."),
+									indicator: "green",
+								},
+								7,
+							);
+						}
+					},
+				});
+			};
+
+			if (frm.is_dirty()) {
+				frm.save().then(() => start_export());
+			} else {
+				start_export();
+			}
+		});
 		frm.add_custom_button(__("View Logs"), () => {
 			frappe.set_route("List", "Ecommerce Integration Log", {
 				integration: "Shopify",

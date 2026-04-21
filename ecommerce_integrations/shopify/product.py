@@ -1,3 +1,4 @@
+from time import process_time
 from typing import Optional
 
 import frappe
@@ -9,6 +10,8 @@ from shopify.resources import Product, Variant
 from ecommerce_integrations.ecommerce_integrations.doctype.ecommerce_item import ecommerce_item
 from ecommerce_integrations.shopify.connection import temp_shopify_session
 from ecommerce_integrations.shopify.constants import (
+	EXPORT_PRODUCTS_JOB_NAME,
+	EXPORT_PRODUCTS_REALTIME_KEY,
 	ITEM_SELLING_RATE_FIELD,
 	MODULE_NAME,
 	SETTING_DOCTYPE,
@@ -568,3 +571,101 @@ def write_upload_log(status: bool, product: Product, item, action="Created") -> 
 			message=f"{action} Item: {item.name}, shopify product: {product.id}",
 			method="upload_erpnext_item",
 		)
+
+
+@frappe.whitelist()
+def export_all_products():
+	setting = frappe.get_doc(SETTING_DOCTYPE)
+
+	if not setting.is_enabled():
+		frappe.throw(_("Please enable Shopify before exporting products."))
+
+	if not setting.upload_erpnext_items:
+		frappe.throw(_("Enable 'Upload new ERPNext Items to Shopify' before exporting products."))
+
+	frappe.enqueue(
+		queue_export_all_products,
+		queue="long",
+		job_name=EXPORT_PRODUCTS_JOB_NAME,
+		key=EXPORT_PRODUCTS_REALTIME_KEY,
+		enqueue_after_commit=True,
+	)
+
+	return {"queued": True}
+
+
+def queue_export_all_products():
+	start_time = process_time()
+	setting = frappe.get_doc(SETTING_DOCTYPE)
+	item_names = _get_items_for_export(setting)
+	total_items = len(item_names)
+	success_count = 0
+	error_count = 0
+	skipped_count = 0
+
+	_publish_export(f"Queued {total_items} ERPNext items for Shopify export.")
+
+	if not total_items:
+		_publish_export(_("No ERPNext items matched the current Shopify export settings."), done=True)
+		return True
+
+	savepoint = "shopify_product_export"
+	for index, item_name in enumerate(item_names, start=1):
+		try:
+			item = frappe.get_doc("Item", item_name)
+			before_sync = _is_item_synced(item)
+			_publish_export(f"Exporting {item_name} ({index}/{total_items})", br=False)
+			frappe.db.savepoint(savepoint)
+			upload_erpnext_item(item)
+			after_sync = _is_item_synced(item)
+
+			if before_sync == after_sync and not setting.update_shopify_item_on_update:
+				skipped_count += 1
+				_publish_export(f"Skipped {item_name}; already synced.", br=False)
+			else:
+				success_count += 1
+				_publish_export(f"✅ Exported {item_name}", br=False)
+		except Exception as exc:
+			error_count += 1
+			frappe.db.rollback(save_point=savepoint)
+			_publish_export(f"❌ Error exporting {item_name}: {exc!s}", error=True)
+			continue
+
+		if index % 20 == 0:
+			frappe.db.commit()
+
+	frappe.db.commit()
+	end_time = process_time()
+	_publish_export(
+		f"🎉 Done in {end_time - start_time}s. Exported {success_count}, skipped {skipped_count}, errors {error_count}.",
+		done=True,
+	)
+	return True
+
+
+def _get_items_for_export(setting) -> list[str]:
+	filters = {"has_variants": 0}
+	if not setting.upload_variants_as_items:
+		filters["variant_of"] = ["is", "not set"]
+
+	return frappe.db.get_all("Item", filters=filters, pluck="name", order_by="modified asc")
+
+
+def _is_item_synced(item) -> bool:
+	return bool(
+		frappe.db.exists(
+			"Ecommerce Item",
+			{"erpnext_item_code": item.name, "integration": MODULE_NAME},
+		)
+	)
+
+
+def _publish_export(message, error=False, done=False, br=True):
+	frappe.publish_realtime(
+		EXPORT_PRODUCTS_REALTIME_KEY,
+		{
+			"error": error,
+			"message": message + ("<br /><br />" if br else ""),
+			"done": done,
+		},
+	)
