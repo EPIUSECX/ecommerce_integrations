@@ -45,7 +45,11 @@ def _get_client_credentials_access_token(setting, *, allow_refresh: bool = True)
 	if cached_token:
 		return cached_token
 
-	stored_token = setting.get_password("password")
+	stored_token = None
+	try:
+		stored_token = setting.get_password("password")
+	except Exception:
+		stored_token = None
 	if stored_token and not allow_refresh:
 		return stored_token
 
