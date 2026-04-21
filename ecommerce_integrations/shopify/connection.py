@@ -40,6 +40,17 @@ def get_shopify_access_token(setting=None, *, allow_refresh: bool = True):
 	return token or None
 
 
+def has_configured_shopify_auth(setting=None) -> bool:
+	doc = setting or frappe.get_doc(SETTING_DOCTYPE)
+	if not doc.is_enabled():
+		return False
+
+	if doc.auth_method == AUTH_METHOD_CLIENT_CREDENTIALS:
+		return bool((doc.client_id or "").strip() and doc.shared_secret and doc.shopify_url)
+
+	return bool(get_shopify_access_token(doc, allow_refresh=False))
+
+
 def _get_client_credentials_access_token(setting, *, allow_refresh: bool = True) -> str | None:
 	cached_token = _get_cached_client_credentials_token()
 	if cached_token:
@@ -181,10 +192,15 @@ def temp_shopify_session(func):
 
 		setting = frappe.get_doc(SETTING_DOCTYPE)
 		if setting.is_enabled():
-			token = get_shopify_access_token(setting)
-			if not token:
+			if not has_configured_shopify_auth(setting):
 				frappe.throw(
 					_("Configure Shopify authentication (OAuth, Client Credentials, or access token) before using this action.")
+				)
+
+			token = get_shopify_access_token(setting, allow_refresh=True)
+			if not token:
+				frappe.throw(
+					_("Unable to obtain a Shopify access token with the current settings.")
 				)
 			auth_details = (setting.shopify_url, API_VERSION, token)
 			try:
