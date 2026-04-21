@@ -8,8 +8,11 @@ See Shopify: https://shopify.dev/docs/apps/auth/oauth/getting-started
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import re
 import secrets
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import requests
 
@@ -27,6 +30,7 @@ from ecommerce_integrations.shopify.constants import (
 
 OAUTH_STATE_CACHE_PREFIX = "shopify_oauth_state:"
 OAUTH_STATE_TTL_SEC = 600
+SHOP_DOMAIN_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$")
 
 
 def _oauth_redirect(url: str) -> None:
@@ -42,6 +46,44 @@ def _redirect_to_form(**query_params) -> None:
 	_oauth_redirect(target)
 
 
+def _get_shopify_redirect_uri() -> str:
+	"""Build a public callback URL without any internal bench port."""
+	redirect_uri = get_url("/api/method/ecommerce_integrations.shopify.oauth.shopify_oauth_callback")
+	parsed = urlsplit(redirect_uri)
+	if parsed.port and parsed.hostname:
+		redirect_uri = urlunsplit((parsed.scheme, parsed.hostname, parsed.path, parsed.query, parsed.fragment))
+	return redirect_uri
+
+
+def _normalize_shop_domain(shop: str) -> str:
+	normalized = (shop or "").replace("https://", "").replace("http://", "").strip().strip("/").lower()
+	if not SHOP_DOMAIN_PATTERN.fullmatch(normalized):
+		frappe.throw(_("Enter a valid Shopify Shop URL ending in .myshopify.com."))
+	return normalized
+
+
+def _build_hmac_message(params) -> str:
+	items = []
+	for key in sorted(params):
+		if key in {"hmac", "signature"}:
+			continue
+		value = params.get(key)
+		if value is None:
+			continue
+		items.append(f"{key}={value}")
+	return "&".join(items)
+
+
+def _is_valid_oauth_callback(args, shared_secret: str) -> bool:
+	received_hmac = (args.get("hmac") or "").strip()
+	if not received_hmac or not shared_secret:
+		return False
+
+	message = _build_hmac_message(args)
+	computed_hmac = hmac.new(shared_secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+	return hmac.compare_digest(computed_hmac, received_hmac)
+
+
 @frappe.whitelist()
 def shopify_oauth_start() -> str:
 	"""Return Shopify authorize URL. Desk opens this URL in the browser."""
@@ -55,8 +97,8 @@ def shopify_oauth_start() -> str:
 	if not (doc.shopify_url and doc.client_id and doc.shared_secret):
 		frappe.throw(_("Enter Shop URL, Client ID, and API Secret before connecting."))
 
-	shop = doc.shopify_url.replace("https://", "").strip("/")
-	redirect_uri = get_url("/api/method/ecommerce_integrations.shopify.oauth.shopify_oauth_callback")
+	shop = _normalize_shop_domain(doc.shopify_url)
+	redirect_uri = _get_shopify_redirect_uri()
 
 	state = secrets.token_urlsafe(32)
 	frappe.cache().set_value(
@@ -86,6 +128,11 @@ def shopify_oauth_callback() -> None:
 		_redirect_to_form(shopify_oauth="error", shopify_oauth_message=str(_("Missing OAuth parameters")))
 		return
 
+	doc = frappe.get_doc(SETTING_DOCTYPE)
+	if not _is_valid_oauth_callback(args, doc.shared_secret):
+		_redirect_to_form(shopify_oauth="error", shopify_oauth_message=str(_("Shopify callback verification failed.")))
+		return
+
 	cache_key = f"{OAUTH_STATE_CACHE_PREFIX}{state}"
 	payload = frappe.cache().get_value(cache_key)
 	if not payload:
@@ -94,8 +141,8 @@ def shopify_oauth_callback() -> None:
 
 	frappe.cache().delete_value(cache_key)
 
-	expected_shop = (payload.get("shop") or "").replace("https://", "").strip("/")
-	normalized_shop = shop.replace("https://", "").strip("/")
+	expected_shop = _normalize_shop_domain(payload.get("shop") or "")
+	normalized_shop = _normalize_shop_domain(shop)
 	if expected_shop != normalized_shop:
 		_redirect_to_form(shopify_oauth="error", shopify_oauth_message=str(_("Shop does not match OAuth session.")))
 		return

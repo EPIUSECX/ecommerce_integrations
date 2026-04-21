@@ -1,7 +1,10 @@
 # Copyright (c) 2026, Frappe and contributors
 # For license information, please see LICENSE
 
+import hashlib
+import hmac
 import unittest
+from unittest.mock import patch
 
 import frappe
 import requests
@@ -22,6 +25,41 @@ class TestShopifyOAuthHelpers(unittest.TestCase):
 		resp.status_code = 500
 		err = requests.HTTPError(response=resp)
 		self.assertFalse(connection._is_shopify_unauthorized_error(err))
+
+	def test_get_shopify_redirect_uri_strips_internal_port(self):
+		from ecommerce_integrations.shopify.oauth import _get_shopify_redirect_uri
+
+		with patch("ecommerce_integrations.shopify.oauth.get_url") as mocked_get_url:
+			mocked_get_url.return_value = "https://cutover.nbg.frappe.cloud:8000/api/method/ecommerce_integrations.shopify.oauth.shopify_oauth_callback"
+
+			redirect_uri = _get_shopify_redirect_uri()
+
+		self.assertEqual(
+			redirect_uri,
+			"https://cutover.nbg.frappe.cloud/api/method/ecommerce_integrations.shopify.oauth.shopify_oauth_callback",
+		)
+
+	def test_normalize_shop_domain_requires_myshopify_domain(self):
+		from ecommerce_integrations.shopify.oauth import _normalize_shop_domain
+
+		self.assertEqual(_normalize_shop_domain("https://Example-Store.myshopify.com/"), "example-store.myshopify.com")
+		with self.assertRaises(frappe.ValidationError):
+			_normalize_shop_domain("https://admin.shopify.com/store/example")
+
+	def test_valid_oauth_callback_hmac(self):
+		from ecommerce_integrations.shopify.oauth import _is_valid_oauth_callback
+
+		args = {
+			"code": "sample-code",
+			"shop": "example-store.myshopify.com",
+			"state": "sample-state",
+			"timestamp": "1710000000",
+		}
+		message = "&".join(f"{key}={args[key]}" for key in sorted(args))
+		secret = "shpss_example"
+		args["hmac"] = hmac.new(secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+
+		self.assertTrue(_is_valid_oauth_callback(args, secret))
 
 
 class TestShopifyOAuthIntegration(unittest.TestCase):

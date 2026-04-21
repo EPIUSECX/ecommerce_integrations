@@ -82,7 +82,7 @@
    "label": "Authentication Details"
   },
   {
-   "description": "eg: frappe.myshopify.com",
+   "description": "Use the store's permanent .myshopify.com domain, for example frappe.myshopify.com.",
    "fieldname": "shopify_url",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -95,7 +95,7 @@
   },
   {
    "default": "Manual",
-   "description": "Manual: paste Admin API access token. OAuth: connect via Shopify (recommended for Partner apps).",
+   "description": "Manual: paste Admin API access token. OAuth: connect via Shopify for a non-embedded app or an app version using legacy install flow.",
    "fieldname": "auth_method",
    "fieldtype": "Select",
    "label": "Authentication method",

@@ -1,6 +1,8 @@
 # Copyright (c) 2021, Frappe and contributors
 # For license information, please see LICENSE
 
+import re
+
 import frappe
 from frappe import _
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
@@ -37,6 +39,8 @@ from ecommerce_integrations.shopify.utils import (
 	migrate_from_old_connector,
 )
 
+SHOP_DOMAIN_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$")
+
 
 class ShopifySetting(SettingController):
 	def is_enabled(self) -> bool:
@@ -49,9 +53,13 @@ class ShopifySetting(SettingController):
 			self.auth_method = AUTH_METHOD_MANUAL
 
 		if self.shopify_url:
-			self.shopify_url = self.shopify_url.replace("https://", "")
+			self.shopify_url = (
+				self.shopify_url.replace("https://", "").replace("http://", "").strip("/").lower()
+			)
 
 		if self.enable_shopify:
+			if self.shopify_url and not SHOP_DOMAIN_PATTERN.fullmatch(self.shopify_url):
+				frappe.throw(_("Shop URL must be the store's permanent .myshopify.com domain."))
 			if self.auth_method == AUTH_METHOD_MANUAL and not self.get_password("password"):
 				frappe.throw(_("Password / Access Token is required for Manual authentication."))
 			if self.auth_method == AUTH_METHOD_OAUTH:
