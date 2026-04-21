@@ -587,7 +587,6 @@ def export_all_products():
 		queue_export_all_products,
 		queue="long",
 		job_name=EXPORT_PRODUCTS_JOB_NAME,
-		key=EXPORT_PRODUCTS_REALTIME_KEY,
 		enqueue_after_commit=True,
 	)
 
