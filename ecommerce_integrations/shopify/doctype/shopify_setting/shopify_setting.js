@@ -49,6 +49,23 @@ frappe.ui.form.on("Shopify Setting", {
 	},
 
 	refresh: function (frm) {
+		frm.add_custom_button(__("Test Connection"), () => {
+			frappe.call({
+				method: "ecommerce_integrations.shopify.connection.test_shopify_connection",
+				freeze: true,
+				freeze_message: __("Testing Shopify connection…"),
+				callback: function (r) {
+					if (!r.exc) {
+						const shop = (r.message && r.message.shop) || frm.doc.shopify_url;
+						frappe.show_alert(
+							{ message: __("Connected to {0}", [shop]), indicator: "green" },
+							7,
+						);
+						frm.reload_doc();
+					}
+				},
+			});
+		});
 		frm.add_custom_button(__("Import Products"), function () {
 			frappe.set_route("shopify-import-products");
 		});

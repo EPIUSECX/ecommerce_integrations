@@ -27,23 +27,30 @@ from ecommerce_integrations.shopify.utils import create_shopify_log
 CLIENT_CREDENTIALS_CACHE_PREFIX = "shopify_client_credentials_token:"
 
 
-def get_shopify_access_token(setting=None):
+def get_shopify_access_token(setting=None, *, allow_refresh: bool = True):
 	"""Return the Admin API access token for Shopify, or None if missing."""
 	doc = setting or frappe.get_doc(SETTING_DOCTYPE)
 	if not doc.is_enabled():
 		return None
 
 	if doc.auth_method == AUTH_METHOD_CLIENT_CREDENTIALS:
-		return _get_client_credentials_access_token(doc)
+		return _get_client_credentials_access_token(doc, allow_refresh=allow_refresh)
 
 	token = doc.get_password("password")
 	return token or None
 
 
-def _get_client_credentials_access_token(setting) -> str | None:
+def _get_client_credentials_access_token(setting, *, allow_refresh: bool = True) -> str | None:
 	cached_token = _get_cached_client_credentials_token()
 	if cached_token:
 		return cached_token
+
+	stored_token = setting.get_password("password")
+	if stored_token and not allow_refresh:
+		return stored_token
+
+	if not allow_refresh:
+		return None
 
 	client_id = (setting.client_id or "").strip()
 	client_secret = setting.shared_secret
@@ -184,6 +191,47 @@ def temp_shopify_session(func):
 				raise
 
 	return wrapper
+
+
+@frappe.whitelist()
+def test_shopify_connection() -> dict:
+	frappe.only_for("System Manager")
+	doc = frappe.get_doc(SETTING_DOCTYPE)
+	if not doc.is_enabled():
+		frappe.throw(_("Enable Shopify before testing the connection."))
+
+	token = get_shopify_access_token(doc)
+	if not token:
+		frappe.throw(_("Unable to obtain a Shopify access token with the current settings."))
+
+	resp = requests.get(
+		f"https://{doc.shopify_url}/admin/api/{API_VERSION}/shop.json",
+		headers={"X-Shopify-Access-Token": token},
+		timeout=30,
+	)
+	if resp.status_code == 401:
+		mark_shopify_connection_needs_reconnection(
+			_("Shopify rejected the connection test (401). Verify the configured credentials.")
+		)
+	resp.raise_for_status()
+	body = resp.json() or {}
+	shop_name = ((body.get("shop") or {}).get("name")) or doc.shopify_url
+
+	if not doc.webhooks:
+		new_webhooks = register_webhooks(doc.shopify_url, token)
+		for wh in new_webhooks:
+			doc.append("webhooks", {"webhook_id": wh.id, "method": wh.topic})
+		doc.flags.ignore_permissions = True
+		doc.flags.shopify_webhooks_registered_now = True
+		doc.save()
+
+	frappe.db.set_single_value(
+		SETTING_DOCTYPE,
+		"shopify_connection_status",
+		"Connected",
+		update_modified=False,
+	)
+	return {"shop": shop_name}
 
 
 def register_webhooks(shopify_url: str, password: str) -> list[Webhook]:

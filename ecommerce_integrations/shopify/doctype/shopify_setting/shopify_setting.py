@@ -97,7 +97,7 @@ class ShopifySetting(SettingController):
 			migrate_from_old_connector()
 
 	def _handle_webhooks(self):
-		token = connection.get_shopify_access_token(self)
+		token = connection.get_shopify_access_token(self, allow_refresh=False)
 		if self.is_enabled() and not self.webhooks:
 			if not token:
 				# OAuth: user must complete Connect before webhooks can be registered.
