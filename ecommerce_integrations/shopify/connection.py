@@ -36,7 +36,7 @@ def get_shopify_access_token(setting=None, *, allow_refresh: bool = True):
 	if doc.auth_method == AUTH_METHOD_CLIENT_CREDENTIALS:
 		return _get_client_credentials_access_token(doc, allow_refresh=allow_refresh)
 
-	token = doc.get_password("password")
+	token = doc.get_password("password", raise_exception=False)
 	return token or None
 
 

@@ -61,7 +61,7 @@ class ShopifySetting(SettingController):
 		if self.enable_shopify:
 			if self.shopify_url and not SHOP_DOMAIN_PATTERN.fullmatch(self.shopify_url):
 				frappe.throw(_("Shop URL must be the store's permanent .myshopify.com domain."))
-			if self.auth_method == AUTH_METHOD_MANUAL and not self.get_password("password"):
+			if self.auth_method == AUTH_METHOD_MANUAL and not self.get_password("password", raise_exception=False):
 				frappe.throw(_("Password / Access Token is required for Manual authentication."))
 			if self.auth_method in (AUTH_METHOD_OAUTH, AUTH_METHOD_CLIENT_CREDENTIALS):
 				if not self.client_id:
