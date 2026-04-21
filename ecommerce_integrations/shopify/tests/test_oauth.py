@@ -4,6 +4,7 @@
 import hashlib
 import hmac
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import frappe
@@ -60,6 +61,61 @@ class TestShopifyOAuthHelpers(unittest.TestCase):
 		args["hmac"] = hmac.new(secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
 
 		self.assertTrue(_is_valid_oauth_callback(args, secret))
+
+
+class TestShopifyClientCredentials(unittest.TestCase):
+	def test_get_shopify_access_token_uses_cached_client_credentials_token(self):
+		cache = {}
+
+		def get_value(key):
+			return cache.get(key)
+
+		def set_value(key, value, expires_in_sec=None):
+			cache[key] = value
+
+		doc = SimpleNamespace(
+			is_enabled=lambda: True,
+			auth_method="Client Credentials",
+			client_id="client-id",
+			shared_secret="shpss_secret",
+			shopify_url="example.myshopify.com",
+			get_password=lambda fieldname: None,
+		)
+		payload = {"token": "cached-token", "expires_at": "2999-01-01T00:00:00+00:00"}
+		cache["shopify_client_credentials_token:test-site"] = payload
+
+		with (
+			patch("frappe.local", SimpleNamespace(site="test-site")),
+			patch("ecommerce_integrations.shopify.connection.frappe.cache", return_value=SimpleNamespace(get_value=get_value)),
+		):
+			from ecommerce_integrations.shopify.connection import get_shopify_access_token
+
+			token = get_shopify_access_token(doc)
+
+		self.assertEqual(token, "cached-token")
+
+	def test_request_client_credentials_token(self):
+		from ecommerce_integrations.shopify.connection import _request_client_credentials_token
+
+		class _Resp:
+			status_code = 200
+
+			def raise_for_status(self):
+				return None
+
+			def json(self):
+				return {"access_token": "fresh-token", "expires_in": 86400}
+
+		with patch("ecommerce_integrations.shopify.connection.requests.post", return_value=_Resp()) as mocked_post:
+			token, expires_in = _request_client_credentials_token(
+				shop="example.myshopify.com",
+				client_id="client-id",
+				client_secret="shpss_secret",
+			)
+
+		self.assertEqual(token, "fresh-token")
+		self.assertEqual(expires_in, 86400)
+		mocked_post.assert_called_once()
 
 
 class TestShopifyOAuthIntegration(unittest.TestCase):

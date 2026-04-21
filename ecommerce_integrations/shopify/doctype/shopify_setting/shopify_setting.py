@@ -18,6 +18,7 @@ from ecommerce_integrations.controllers.setting import (
 from ecommerce_integrations.shopify import connection
 from ecommerce_integrations.shopify.constants import (
 	ADDRESS_ID_FIELD,
+	AUTH_METHOD_CLIENT_CREDENTIALS,
 	AUTH_METHOD_MANUAL,
 	AUTH_METHOD_OAUTH,
 	CONNECTION_STATUS_CONNECTED,
@@ -62,12 +63,12 @@ class ShopifySetting(SettingController):
 				frappe.throw(_("Shop URL must be the store's permanent .myshopify.com domain."))
 			if self.auth_method == AUTH_METHOD_MANUAL and not self.get_password("password"):
 				frappe.throw(_("Password / Access Token is required for Manual authentication."))
-			if self.auth_method == AUTH_METHOD_OAUTH:
+			if self.auth_method in (AUTH_METHOD_OAUTH, AUTH_METHOD_CLIENT_CREDENTIALS):
 				if not self.client_id:
-					frappe.throw(_("Client ID is required for OAuth authentication."))
+					frappe.throw(_("Client ID is required for this authentication method."))
 				if not self.shared_secret:
 					frappe.throw(
-						_("API Secret (Shared secret) is required for OAuth and webhook verification.")
+						_("API Secret (Shared secret) is required for this authentication method and webhook verification.")
 					)
 
 		self._handle_webhooks()

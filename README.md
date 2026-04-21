@@ -32,9 +32,17 @@ $ bench --site sitename install-app ecommerce_integrations
 
 After installation follow user documentation for each integration to set it up.
 
+### Shopify authentication options
+
+This connector supports three Shopify authentication modes:
+
+1. **Manual**: paste a long-lived Admin API access token from older custom-app setups.
+2. **Client Credentials**: for same-org Dev Dashboard apps. ERPNext exchanges the Client ID and API secret for a 24-hour token and refreshes it automatically.
+3. **OAuth**: authorization code grant for non-embedded apps, or app versions using legacy install flow.
+
 ### Shopify OAuth (authorization code grant)
 
-You can connect **Shopify Setting** using **OAuth** instead of pasting an Admin API access token:
+If you use **OAuth** instead of **Client Credentials** or a pasted Admin API token:
 
 1. Configure the Shopify app as a **non-embedded app**, or use an app version with **legacy install flow** enabled. This connector doesn't implement Shopify managed installation / token exchange.
 2. In the **Partner Dashboard** (or `shopify.app.toml`), set **`[auth].redirect_urls`** to exactly:

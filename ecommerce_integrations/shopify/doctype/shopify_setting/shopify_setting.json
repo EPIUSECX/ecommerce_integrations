@@ -95,11 +95,11 @@
   },
   {
    "default": "Manual",
-   "description": "Manual: paste Admin API access token. OAuth: connect via Shopify for a non-embedded app or an app version using legacy install flow.",
+   "description": "Manual: paste Admin API access token. Client Credentials: for same-org Dev Dashboard apps with 24-hour token refresh. OAuth: connect via Shopify for a non-embedded app or an app version using legacy install flow.",
    "fieldname": "auth_method",
    "fieldtype": "Select",
    "label": "Authentication method",
-   "options": "Manual\nOAuth"
+   "options": "Manual\nClient Credentials\nOAuth"
   },
   {
    "default": "Not Connected",
@@ -111,12 +111,12 @@
    "read_only": 1
   },
   {
-   "depends_on": "eval:doc.enable_shopify && doc.auth_method=='OAuth'",
-   "description": "Shopify app Client ID (API key) from Partner Dashboard or shopify.app.toml.",
+   "depends_on": "eval:doc.enable_shopify && ['OAuth', 'Client Credentials'].includes(doc.auth_method)",
+   "description": "Shopify app Client ID (API key) from Partner Dashboard or Dev Dashboard.",
    "fieldname": "client_id",
    "fieldtype": "Data",
    "label": "Client ID",
-   "mandatory_depends_on": "eval:doc.enable_shopify && doc.auth_method=='OAuth'"
+   "mandatory_depends_on": "eval:doc.enable_shopify && ['OAuth', 'Client Credentials'].includes(doc.auth_method)"
   },
   {
    "fieldname": "password",
@@ -125,7 +125,7 @@
    "mandatory_depends_on": "eval:doc.enable_shopify && doc.auth_method=='Manual'"
   },
   {
-   "description": "Webhook HMAC verification and OAuth client secret (Partner app API secret).",
+   "description": "Webhook HMAC verification and the app secret used for OAuth or Client Credentials token requests.",
    "fieldname": "shared_secret",
    "fieldtype": "Data",
    "label": "Shared secret / API Secret",

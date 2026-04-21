@@ -3,9 +3,12 @@ import functools
 import hashlib
 import hmac
 import json
+from datetime import datetime, timedelta, timezone
 
 import frappe
+import requests
 from frappe import _
+from frappe.utils import password
 from frappe.utils import cstr
 from frappe.exceptions import DuplicateEntryError, UniqueValidationError
 from shopify.resources import Webhook
@@ -13,6 +16,7 @@ from shopify.session import Session
 
 from ecommerce_integrations.shopify.constants import (
 	API_VERSION,
+	AUTH_METHOD_CLIENT_CREDENTIALS,
 	CONNECTION_STATUS_NEEDS_RECONNECTION,
 	EVENT_MAPPER,
 	SETTING_DOCTYPE,
@@ -20,14 +24,100 @@ from ecommerce_integrations.shopify.constants import (
 )
 from ecommerce_integrations.shopify.utils import create_shopify_log
 
+CLIENT_CREDENTIALS_CACHE_PREFIX = "shopify_client_credentials_token:"
+
 
 def get_shopify_access_token(setting=None):
 	"""Return the Admin API access token for Shopify, or None if missing."""
 	doc = setting or frappe.get_doc(SETTING_DOCTYPE)
 	if not doc.is_enabled():
 		return None
+
+	if doc.auth_method == AUTH_METHOD_CLIENT_CREDENTIALS:
+		return _get_client_credentials_access_token(doc)
+
 	token = doc.get_password("password")
 	return token or None
+
+
+def _get_client_credentials_access_token(setting) -> str | None:
+	cached_token = _get_cached_client_credentials_token()
+	if cached_token:
+		return cached_token
+
+	client_id = (setting.client_id or "").strip()
+	client_secret = setting.shared_secret
+	if not client_id or not client_secret or not setting.shopify_url:
+		return None
+
+	token, expires_in = _request_client_credentials_token(
+		shop=setting.shopify_url,
+		client_id=client_id,
+		client_secret=client_secret,
+	)
+	_store_client_credentials_token(token=token, expires_in=expires_in)
+	password.set_encrypted_password(SETTING_DOCTYPE, SETTING_DOCTYPE, token, fieldname="password")
+	return token
+
+
+def _get_cached_client_credentials_token() -> str | None:
+	payload = frappe.cache().get_value(_get_client_credentials_cache_key())
+	if not payload:
+		return None
+
+	token = payload.get("token")
+	expires_at = payload.get("expires_at")
+	if not token or not expires_at:
+		return None
+
+	try:
+		expiry = datetime.fromisoformat(expires_at)
+	except ValueError:
+		return None
+
+	if expiry <= datetime.now(timezone.utc):
+		frappe.cache().delete_value(_get_client_credentials_cache_key())
+		return None
+
+	return token
+
+
+def _store_client_credentials_token(*, token: str, expires_in: int | None) -> None:
+	ttl = max(int(expires_in or 86400) - 300, 60)
+	expiry = datetime.now(timezone.utc) + timedelta(seconds=ttl)
+	frappe.cache().set_value(
+		_get_client_credentials_cache_key(),
+		{"token": token, "expires_at": expiry.isoformat()},
+		expires_in_sec=ttl,
+	)
+
+
+def _get_client_credentials_cache_key() -> str:
+	return f"{CLIENT_CREDENTIALS_CACHE_PREFIX}{frappe.local.site}"
+
+
+def _request_client_credentials_token(*, shop: str, client_id: str, client_secret: str) -> tuple[str, int | None]:
+	url = f"https://{shop}/admin/oauth/access_token"
+	resp = requests.post(
+		url,
+		data={
+			"grant_type": "client_credentials",
+			"client_id": client_id,
+			"client_secret": client_secret,
+		},
+		headers={"Content-Type": "application/x-www-form-urlencoded"},
+		timeout=30,
+	)
+	if resp.status_code == 401:
+		mark_shopify_connection_needs_reconnection(
+			_("Shopify rejected the client credentials token request (401). Verify Client ID and API secret.")
+		)
+	resp.raise_for_status()
+	body = resp.json()
+	access_token = body.get("access_token")
+	if not access_token:
+		frappe.throw(_("Shopify response did not include an access token."))
+	return access_token, body.get("expires_in")
 
 
 def mark_shopify_connection_needs_reconnection(message: str | None = None) -> None:
@@ -47,6 +137,7 @@ def mark_shopify_connection_needs_reconnection(message: str | None = None) -> No
 def handle_shopify_api_auth_error(exc: BaseException) -> None:
 	"""If exception indicates Shopify auth failure, update connection status (no secrets in logs)."""
 	if _is_shopify_unauthorized_error(exc):
+		frappe.cache().delete_value(_get_client_credentials_cache_key())
 		mark_shopify_connection_needs_reconnection(
 			_("Shopify returned an authentication error. Reconnect or update the access token in Shopify Setting.")
 		)
@@ -82,7 +173,7 @@ def temp_shopify_session(func):
 			token = get_shopify_access_token(setting)
 			if not token:
 				frappe.throw(
-					_("Configure Shopify authentication (OAuth or access token) before using this action.")
+					_("Configure Shopify authentication (OAuth, Client Credentials, or access token) before using this action.")
 				)
 			auth_details = (setting.shopify_url, API_VERSION, token)
 			try:
