@@ -1,10 +1,11 @@
-from time import process_time
+from time import process_time, sleep
 from typing import Optional
 
 import frappe
 from frappe import _, msgprint
 from frappe.utils import cint, cstr
 from frappe.utils.nestedset import get_root_of
+from pyactiveresource.connection import ClientError
 from shopify.resources import Product, Variant
 
 from ecommerce_integrations.ecommerce_integrations.doctype.ecommerce_item import ecommerce_item
@@ -624,9 +625,33 @@ def queue_export_all_products():
 			else:
 				success_count += 1
 				_publish_export(f"✅ Exported {item_name}", br=False)
+			sleep(0.6)
+		except ClientError as exc:
+			error_count += 1
+			_safe_rollback(savepoint)
+			retry_after = _extract_retry_after_seconds(exc)
+			if retry_after:
+				_publish_export(
+					f"⏳ Shopify rate limit hit while exporting {item_name}. Retrying after {retry_after}s...",
+					error=True,
+				)
+				sleep(retry_after)
+				try:
+					frappe.db.savepoint(savepoint)
+					upload_erpnext_item(frappe.get_doc("Item", item_name))
+					success_count += 1
+					_publish_export(f"✅ Exported {item_name} after retry", br=False)
+					sleep(0.6)
+					continue
+				except Exception as retry_exc:
+					_safe_rollback(savepoint)
+					_publish_export(f"❌ Error exporting {item_name}: {retry_exc!s}", error=True)
+					continue
+			_publish_export(f"❌ Error exporting {item_name}: {exc!s}", error=True)
+			continue
 		except Exception as exc:
 			error_count += 1
-			frappe.db.rollback(save_point=savepoint)
+			_safe_rollback(savepoint)
 			_publish_export(f"❌ Error exporting {item_name}: {exc!s}", error=True)
 			continue
 
@@ -668,3 +693,23 @@ def _publish_export(message, error=False, done=False, br=True):
 			"done": done,
 		},
 	)
+
+
+def _safe_rollback(savepoint: str) -> None:
+	try:
+		frappe.db.rollback(save_point=savepoint)
+	except Exception:
+		frappe.db.rollback()
+
+
+def _extract_retry_after_seconds(exc: ClientError) -> float:
+	response = getattr(exc, "response", None)
+	headers = getattr(response, "headers", {}) or {}
+	retry_after = headers.get("retry-after")
+	if not retry_after:
+		return 0
+
+	try:
+		return float(retry_after)
+	except (TypeError, ValueError):
+		return 0
