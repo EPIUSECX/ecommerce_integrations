@@ -81,7 +81,7 @@ class ShopifySetting(SettingController):
 		self._sync_connection_status_display()
 
 	def _sync_connection_status_display(self) -> None:
-		token = connection.get_shopify_access_token(self)
+		token = connection.get_shopify_access_token(self, allow_refresh=False)
 		if not self.enable_shopify:
 			return
 		if self.auth_method == AUTH_METHOD_OAUTH and not token:
@@ -104,7 +104,30 @@ class ShopifySetting(SettingController):
 				# OAuth: user must complete Connect before webhooks can be registered.
 				return
 
-			new_webhooks = connection.register_webhooks(self.shopify_url, token)
+			try:
+				new_webhooks = connection.register_webhooks(self.shopify_url, token)
+			except Exception as e:
+				connection.handle_shopify_api_auth_error(e)
+				if connection._is_shopify_unauthorized_error(e):
+					if self.auth_method == AUTH_METHOD_CLIENT_CREDENTIALS:
+						fresh_token = connection.get_shopify_access_token(self, allow_refresh=True)
+						if fresh_token and fresh_token != token:
+							try:
+								new_webhooks = connection.register_webhooks(self.shopify_url, fresh_token)
+							except Exception as retry_error:
+								connection.handle_shopify_api_auth_error(retry_error)
+								if connection._is_shopify_unauthorized_error(retry_error):
+									self.shopify_connection_status = CONNECTION_STATUS_NEEDS_RECONNECTION
+									return
+								raise
+						else:
+							self.shopify_connection_status = CONNECTION_STATUS_NEEDS_RECONNECTION
+							return
+					else:
+						self.shopify_connection_status = CONNECTION_STATUS_NEEDS_RECONNECTION
+						return
+				else:
+					raise
 
 			if not new_webhooks:
 				msg = _("Failed to register webhooks with Shopify.") + "<br>"
@@ -120,7 +143,12 @@ class ShopifySetting(SettingController):
 
 		elif not self.is_enabled():
 			if token:
-				connection.unregister_webhooks(self.shopify_url, token)
+				try:
+					connection.unregister_webhooks(self.shopify_url, token)
+				except Exception as e:
+					connection.handle_shopify_api_auth_error(e)
+					if not connection._is_shopify_unauthorized_error(e):
+						raise
 
 			self.webhooks = list()  # remove all webhooks
 

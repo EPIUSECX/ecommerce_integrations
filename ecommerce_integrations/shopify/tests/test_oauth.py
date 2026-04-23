@@ -147,6 +147,83 @@ class TestShopifyClientCredentials(unittest.TestCase):
 		self.assertTrue(doc.flags.shopify_webhooks_registered_now)
 		self.assertEqual(doc.shopify_connection_status, "Connected")
 
+	def test_client_credentials_webhook_setup_marks_reconnection_on_unauthorized(self):
+		from ecommerce_integrations.shopify.constants import AUTH_METHOD_CLIENT_CREDENTIALS
+		from ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting import ShopifySetting
+
+		doc = ShopifySetting.__new__(ShopifySetting)
+		doc.auth_method = AUTH_METHOD_CLIENT_CREDENTIALS
+		doc.enable_shopify = 1
+		doc.webhooks = []
+		doc.shopify_url = "example.myshopify.com"
+		doc.flags = SimpleNamespace()
+		doc.append = lambda *args, **kwargs: None
+		doc.is_enabled = lambda: True
+
+		resp = requests.Response()
+		resp.status_code = 401
+		err = requests.HTTPError(response=resp)
+
+		with (
+			patch(
+				"ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting.connection.get_shopify_access_token",
+				return_value="stale-token",
+			),
+			patch(
+				"ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting.connection.register_webhooks",
+				side_effect=err,
+			),
+			patch(
+				"ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting.connection.handle_shopify_api_auth_error"
+			) as mocked_handle_error,
+		):
+			doc._handle_webhooks()
+
+		mocked_handle_error.assert_called_once_with(err)
+		self.assertEqual(doc.shopify_connection_status, "Needs Reconnection")
+		self.assertFalse(getattr(doc.flags, "shopify_webhooks_registered_now", False))
+
+	def test_client_credentials_webhook_setup_retries_with_fresh_token_after_unauthorized(self):
+		from ecommerce_integrations.shopify.constants import AUTH_METHOD_CLIENT_CREDENTIALS
+		from ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting import ShopifySetting
+
+		doc = ShopifySetting.__new__(ShopifySetting)
+		doc.auth_method = AUTH_METHOD_CLIENT_CREDENTIALS
+		doc.enable_shopify = 1
+		doc.webhooks = []
+		doc.shopify_url = "example.myshopify.com"
+		doc.flags = SimpleNamespace()
+		doc.append = lambda *args, **kwargs: None
+		doc.is_enabled = lambda: True
+
+		resp = requests.Response()
+		resp.status_code = 401
+		err = requests.HTTPError(response=resp)
+		webhook = SimpleNamespace(id=1, topic="orders/create")
+
+		with (
+			patch(
+				"ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting.connection.get_shopify_access_token",
+				side_effect=["stale-token", "fresh-token"],
+			) as mocked_get_token,
+			patch(
+				"ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting.connection.register_webhooks",
+				side_effect=[err, [webhook]],
+			) as mocked_register,
+			patch(
+				"ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting.connection.handle_shopify_api_auth_error"
+			) as mocked_handle_error,
+		):
+			doc._handle_webhooks()
+
+		self.assertEqual(mocked_get_token.call_args_list[0].kwargs, {"allow_refresh": True})
+		self.assertEqual(mocked_get_token.call_args_list[1].kwargs, {"allow_refresh": True})
+		self.assertEqual(mocked_register.call_args_list[0].args, ("example.myshopify.com", "stale-token"))
+		self.assertEqual(mocked_register.call_args_list[1].args, ("example.myshopify.com", "fresh-token"))
+		mocked_handle_error.assert_called_once_with(err)
+		self.assertTrue(doc.flags.shopify_webhooks_registered_now)
+		self.assertEqual(doc.shopify_connection_status, "Connected")
+
 	def test_request_client_credentials_token(self):
 		from ecommerce_integrations.shopify.connection import _request_client_credentials_token
 
