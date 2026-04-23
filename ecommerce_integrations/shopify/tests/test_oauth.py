@@ -87,12 +87,65 @@ class TestShopifyClientCredentials(unittest.TestCase):
 		with (
 			patch("frappe.local", SimpleNamespace(site="test-site")),
 			patch("ecommerce_integrations.shopify.connection.frappe.cache", return_value=SimpleNamespace(get_value=get_value)),
+			patch("ecommerce_integrations.shopify.connection._persist_shopify_access_token"),
 		):
 			from ecommerce_integrations.shopify.connection import get_shopify_access_token
 
 			token = get_shopify_access_token(doc)
 
 		self.assertEqual(token, "cached-token")
+
+	def test_get_shopify_access_token_does_not_reuse_persisted_client_credentials_token_without_cache(self):
+		doc = SimpleNamespace(
+			is_enabled=lambda: True,
+			auth_method="Client Credentials",
+			client_id="client-id",
+			shared_secret="shpss_secret",
+			shopify_url="example.myshopify.com",
+			get_password=lambda fieldname: "persisted-but-stale-token",
+		)
+
+		with (
+			patch("frappe.local", SimpleNamespace(site="test-site")),
+			patch(
+				"ecommerce_integrations.shopify.connection.frappe.cache",
+				return_value=SimpleNamespace(get_value=lambda key: None),
+			),
+		):
+			token = connection.get_shopify_access_token(doc, allow_refresh=False)
+
+		self.assertIsNone(token)
+
+	def test_client_credentials_webhook_setup_refreshes_token_on_save(self):
+		from ecommerce_integrations.shopify.constants import AUTH_METHOD_CLIENT_CREDENTIALS
+		from ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting import ShopifySetting
+
+		doc = ShopifySetting.__new__(ShopifySetting)
+		doc.auth_method = AUTH_METHOD_CLIENT_CREDENTIALS
+		doc.enable_shopify = 1
+		doc.webhooks = []
+		doc.shopify_url = "example.myshopify.com"
+		doc.flags = SimpleNamespace()
+		doc.append = lambda *args, **kwargs: None
+		doc.is_enabled = lambda: True
+
+		webhook = SimpleNamespace(id=1, topic="orders/create")
+
+		with (
+			patch(
+				"ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting.connection.get_shopify_access_token",
+				return_value="fresh-token",
+			) as mocked_get_token,
+			patch(
+				"ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting.connection.register_webhooks",
+				return_value=[webhook],
+			),
+		):
+			doc._handle_webhooks()
+
+		mocked_get_token.assert_called_once_with(doc, allow_refresh=True)
+		self.assertTrue(doc.flags.shopify_webhooks_registered_now)
+		self.assertEqual(doc.shopify_connection_status, "Connected")
 
 	def test_request_client_credentials_token(self):
 		from ecommerce_integrations.shopify.connection import _request_client_credentials_token
