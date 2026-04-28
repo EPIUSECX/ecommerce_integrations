@@ -1,6 +1,8 @@
 # Copyright (c) 2021, Frappe and Contributors
 # See LICENSE
 
+from unittest.mock import patch
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
@@ -13,6 +15,7 @@ from ecommerce_integrations.shopify.constants import (
 	ORDER_ITEM_DISCOUNT_FIELD,
 	ORDER_NUMBER_FIELD,
 	ORDER_STATUS_FIELD,
+	WEBHOOK_EVENTS,
 	SUPPLIER_ID_FIELD,
 )
 
@@ -56,3 +59,30 @@ class TestShopifySetting(IntegrationTestCase):
 		created_fields_set = {d[0] for d in created_fields}
 
 		self.assertEqual(created_fields_set, required_fields)
+
+	def test_handle_webhooks_reregisters_when_topics_are_missing(self):
+		setting = frappe.get_doc("Shopify Setting")
+		setting.update(
+			{
+				"enable_shopify": 1,
+				"shopify_url": "frappetest.myshopify.com",
+				"shared_secret": "supersecret",
+				"auth_method": "Manual",
+			}
+		)
+		setting.set_password("password", "supersecret")
+		setting.webhooks = [{"webhook_id": "1", "method": "orders/create"}]
+
+		with patch(
+			"ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting.connection.get_shopify_access_token",
+			return_value="supersecret",
+		), patch(
+			"ecommerce_integrations.shopify.doctype.shopify_setting.shopify_setting.connection.register_webhooks",
+			return_value=[
+				type("Webhook", (), {"id": str(idx), "topic": topic})()
+				for idx, topic in enumerate(WEBHOOK_EVENTS, start=1)
+			],
+		):
+			setting._handle_webhooks()
+
+		self.assertEqual({row.method for row in setting.webhooks}, set(WEBHOOK_EVENTS))

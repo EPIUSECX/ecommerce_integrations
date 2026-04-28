@@ -99,7 +99,11 @@ class ShopifySetting(SettingController):
 	def _handle_webhooks(self):
 		allow_refresh = self.auth_method == AUTH_METHOD_CLIENT_CREDENTIALS
 		token = connection.get_shopify_access_token(self, allow_refresh=allow_refresh)
-		if self.is_enabled() and not self.webhooks:
+		configured_topics = {row.method for row in self.webhooks if row.method}
+		required_topics = set(connection.WEBHOOK_EVENTS)
+		needs_webhook_registration = not self.webhooks or configured_topics != required_topics
+
+		if self.is_enabled() and needs_webhook_registration:
 			if not token:
 				# OAuth: user must complete Connect before webhooks can be registered.
 				return
@@ -135,6 +139,7 @@ class ShopifySetting(SettingController):
 				msg += _("Disabling and re-enabling the integration might also help.")
 				frappe.throw(msg)
 
+			self.webhooks = []
 			for webhook in new_webhooks:
 				self.append("webhooks", {"webhook_id": webhook.id, "method": webhook.topic})
 

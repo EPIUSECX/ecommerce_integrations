@@ -251,6 +251,36 @@ class ShopifyProduct:
 		return supplier_group
 
 
+def sync_product_from_shopify(payload, request_id=None):
+	"""Create ERPNext items from Shopify ``products/create`` webhook payloads."""
+	frappe.set_user("Administrator")
+	frappe.flags.request_id = request_id
+
+	setting = frappe.get_doc(SETTING_DOCTYPE)
+	if not setting.is_enabled():
+		create_shopify_log(status="Invalid", message=_("Shopify integration is disabled"))
+		return
+
+	if not setting.sync_shopify_products_to_erpnext:
+		create_shopify_log(
+			status="Invalid",
+			message=_("Shopify to ERPNext product sync is disabled in Shopify Settings"),
+		)
+		return
+
+	product_id = cstr((payload or {}).get("id") or "")
+	if not product_id:
+		create_shopify_log(status="Invalid", message=_("Product payload missing Shopify product id"))
+		return
+
+	try:
+		ShopifyProduct(product_id=product_id).sync_product()
+	except Exception as e:
+		create_shopify_log(status="Error", exception=e, rollback=True)
+	else:
+		create_shopify_log(status="Success")
+
+
 def _add_weight_details(product_dict):
 	variants = product_dict.get("variants")
 	if variants:

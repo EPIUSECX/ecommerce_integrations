@@ -9,6 +9,7 @@ OLD_SETTINGS_DOCTYPE = "Shopify Settings"
 API_VERSION = "2026-04"
 
 WEBHOOK_EVENTS = [
+	"products/create",
 	"orders/create",
 	"orders/updated",
 	"orders/paid",
@@ -19,6 +20,7 @@ WEBHOOK_EVENTS = [
 ]
 
 EVENT_MAPPER = {
+	"products/create": "ecommerce_integrations.shopify.product.sync_product_from_shopify",
 	"orders/create": "ecommerce_integrations.shopify.order.sync_sales_order",
 	"orders/updated": "ecommerce_integrations.shopify.order.sync_sales_order_updated",
 	"orders/paid": "ecommerce_integrations.shopify.invoice.prepare_sales_invoice",

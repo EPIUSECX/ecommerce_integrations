@@ -50,6 +50,8 @@
   "column_break_34",
   "sync_new_item_as_active",
   "upload_variants_as_items",
+  "shopify_to_erpnext_sync_section",
+  "sync_shopify_products_to_erpnext",
   "inventory_sync_section",
   "warehouse",
   "update_erpnext_stock_levels_to_shopify",
@@ -382,6 +384,18 @@
    "fieldname": "upload_variants_as_items",
    "fieldtype": "Check",
    "label": "Upload ERPNext Variants as Shopify Items"
+  },
+  {
+   "fieldname": "shopify_to_erpnext_sync_section",
+   "fieldtype": "Section Break",
+   "label": "Shopify to ERPNext Sync"
+  },
+  {
+   "default": "0",
+   "description": "When enabled, new Shopify products received through the products/create webhook will be created in ERPNext automatically.",
+   "fieldname": "sync_shopify_products_to_erpnext",
+   "fieldtype": "Check",
+   "label": "Sync New Shopify Products to ERPNext"
   },
   {
    "default": "0",

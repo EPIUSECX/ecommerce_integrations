@@ -3,7 +3,7 @@
 
 import frappe
 
-from ecommerce_integrations.shopify.product import ShopifyProduct
+from ecommerce_integrations.shopify.product import ShopifyProduct, sync_product_from_shopify
 
 from .utils import TestCase
 
@@ -116,6 +116,27 @@ class TestProduct(TestCase):
 			),
 			"39845261541529",
 		)
+
+	def test_products_create_webhook_syncs_when_enabled(self):
+		self.fake("products/6732194021530", body=self.load_fixture("single_product"))
+		setting = frappe.get_doc("Shopify Setting")
+		setting.sync_shopify_products_to_erpnext = 1
+		setting.save(ignore_permissions=True)
+
+		sync_product_from_shopify({"id": "6732194021530"})
+
+		product = ShopifyProduct(product_id="6732194021530", variant_id="39933951901850")
+		self.assertTrue(product.is_synced())
+
+	def test_products_create_webhook_skips_when_disabled(self):
+		setting = frappe.get_doc("Shopify Setting")
+		setting.sync_shopify_products_to_erpnext = 0
+		setting.save(ignore_permissions=True)
+
+		sync_product_from_shopify({"id": "6732194021530"})
+
+		product = ShopifyProduct(product_id="6732194021530", variant_id="39933951901850")
+		self.assertFalse(product.is_synced())
 
 
 def create_item_attributes():
