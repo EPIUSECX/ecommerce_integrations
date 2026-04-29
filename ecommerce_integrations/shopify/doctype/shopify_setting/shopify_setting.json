@@ -52,6 +52,7 @@
   "upload_variants_as_items",
   "shopify_to_erpnext_sync_section",
   "sync_shopify_products_to_erpnext",
+  "item_group_exporting",
   "inventory_sync_section",
   "warehouse",
   "update_erpnext_stock_levels_to_shopify",
@@ -446,12 +447,18 @@
    "fieldtype": "Link",
    "label": "Default Shipping Charges Account",
    "options": "Account"
+  },
+  {
+   "fieldname": "item_group_exporting",
+   "fieldtype": "Table MultiSelect",
+   "label": "Item Group Exporting",
+   "options": "Shopify Item Group"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2023-10-24 10:38:49.247431",
+ "modified": "2026-04-29 10:01:54.638760",
  "modified_by": "Administrator",
  "module": "shopify",
  "name": "Shopify Setting",
@@ -468,6 +475,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],

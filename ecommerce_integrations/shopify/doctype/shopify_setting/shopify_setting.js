@@ -70,9 +70,26 @@ frappe.ui.form.on("Shopify Setting", {
 			frappe.set_route("shopify-import-products");
 		});
 		frm.add_custom_button(__("Export Products"), () => {
-			const start_export = () => {
+			const item_group_child_doctype = "Shopify Item Group";
+			const get_item_groups = () => {
+				return (frm.doc.item_group_exporting || [])
+					.map((row) => row.item_group)
+					.filter(Boolean);
+			};
+			const set_item_groups = (item_groups) => {
+				frm.clear_table("item_group_exporting");
+				[...new Set(item_groups)].forEach((item_group) => {
+					const row = frm.add_child("item_group_exporting");
+					row.item_group = item_group;
+				});
+				frm.refresh_field("item_group_exporting");
+			};
+			const start_export = (item_groups) => {
 				frappe.call({
 					method: "ecommerce_integrations.shopify.product.export_all_products",
+					args: {
+						item_groups: item_groups,
+					},
 					freeze: true,
 					freeze_message: __("Queuing ERPNext product export…"),
 					callback: function (r) {
@@ -88,12 +105,36 @@ frappe.ui.form.on("Shopify Setting", {
 					},
 				});
 			};
+			frappe.model.with_doctype(item_group_child_doctype, () => {
+				const dialog = new frappe.ui.Dialog({
+					title: __("Confirm Products to Export"),
+					fields: [
+						{
+							fieldname: "item_groups",
+							fieldtype: "Table MultiSelect",
+							label: __("Item Groups"),
+							options: item_group_child_doctype,
+							reqd: 1,
+						},
+					],
+					primary_action_label: __("Export"),
+					primary_action(values) {
+						const item_groups = (values.item_groups || [])
+							.map((row) => row.item_group)
+							.filter(Boolean);
 
-			if (frm.is_dirty()) {
-				frm.save().then(() => start_export());
-			} else {
-				start_export();
-			}
+						set_item_groups(item_groups);
+						dialog.hide();
+						frm.save().then(() => start_export(item_groups));
+					},
+				});
+
+				dialog.show();
+				dialog.set_value(
+					"item_groups",
+					get_item_groups().map((item_group) => ({ item_group })),
+				);
+			});
 		});
 		frm.add_custom_button(__("View Logs"), () => {
 			frappe.set_route("List", "Ecommerce Integration Log", {

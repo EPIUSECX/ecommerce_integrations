@@ -605,7 +605,7 @@ def write_upload_log(status: bool, product: Product, item, action="Created") -> 
 
 
 @frappe.whitelist()
-def export_all_products():
+def export_all_products(item_groups=None):
 	setting = frappe.get_doc(SETTING_DOCTYPE)
 
 	if not setting.is_enabled():
@@ -613,6 +613,13 @@ def export_all_products():
 
 	if not setting.upload_erpnext_items:
 		frappe.throw(_("Enable 'Upload new ERPNext Items to Shopify' before exporting products."))
+
+	if item_groups is not None:
+		setting.set(
+			"item_group_exporting",
+			[{"item_group": item_group} for item_group in _normalize_item_groups(item_groups)],
+		)
+		setting.save(ignore_permissions=True)
 
 	frappe.enqueue(
 		queue_export_all_products,
@@ -698,11 +705,36 @@ def queue_export_all_products():
 
 
 def _get_items_for_export(setting) -> list[str]:
+	item_groups = _get_export_item_groups(setting)
+	if not item_groups:
+		return []
+
 	filters = {"has_variants": 0}
 	if not setting.upload_variants_as_items:
 		filters["variant_of"] = ["is", "not set"]
+	filters["item_group"] = ["in", item_groups]
 
 	return frappe.db.get_all("Item", filters=filters, pluck="name", order_by="modified asc")
+
+
+def _get_export_item_groups(setting) -> list[str]:
+	return _normalize_item_groups(getattr(setting, "item_group_exporting", None))
+
+
+def _normalize_item_groups(item_groups) -> list[str]:
+	if isinstance(item_groups, str):
+		item_groups = frappe.parse_json(item_groups)
+
+	seen = set()
+	normalized = []
+	for row in item_groups or []:
+		item_group = row.get("item_group") if isinstance(row, dict) else row
+		item_group = cstr(item_group).strip()
+		if item_group and item_group not in seen:
+			seen.add(item_group)
+			normalized.append(item_group)
+
+	return normalized
 
 
 def _is_item_synced(item) -> bool:
