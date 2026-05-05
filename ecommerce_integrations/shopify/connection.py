@@ -237,6 +237,9 @@ def test_shopify_connection() -> dict:
 		mark_shopify_connection_needs_reconnection(
 			_("Shopify rejected the connection test (401). Verify the configured credentials.")
 		)
+		frappe.throw(
+			_("Shopify rejected the connection test. Reconnect Shopify or update the access token in Shopify Setting.")
+		)
 	resp.raise_for_status()
 	body = resp.json() or {}
 	shop_name = ((body.get("shop") or {}).get("name")) or doc.shopify_url

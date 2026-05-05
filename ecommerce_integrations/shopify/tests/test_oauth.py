@@ -64,6 +64,34 @@ class TestShopifyOAuthHelpers(unittest.TestCase):
 
 
 class TestShopifyClientCredentials(unittest.TestCase):
+	def test_test_shopify_connection_reports_unauthorized_as_validation_error(self):
+		doc = SimpleNamespace(
+			is_enabled=lambda: True,
+			auth_method="Manual",
+			shopify_url="example.myshopify.com",
+			webhooks=[SimpleNamespace(webhook_id="1", method="orders/create")],
+		)
+		resp = requests.Response()
+		resp.status_code = 401
+
+		def throw_validation_error(message):
+			raise frappe.ValidationError(message)
+
+		with (
+			patch("ecommerce_integrations.shopify.connection.frappe.only_for"),
+			patch("ecommerce_integrations.shopify.connection.frappe.get_doc", return_value=doc),
+			patch("ecommerce_integrations.shopify.connection.frappe.throw", side_effect=throw_validation_error),
+			patch("ecommerce_integrations.shopify.connection.get_shopify_access_token", return_value="bad-token"),
+			patch("ecommerce_integrations.shopify.connection._persist_shopify_access_token"),
+			patch("ecommerce_integrations.shopify.connection.requests.get", return_value=resp),
+			patch("ecommerce_integrations.shopify.connection.mark_shopify_connection_needs_reconnection") as mocked_mark,
+			patch("ecommerce_integrations.shopify.connection._", side_effect=lambda msg, *args, **kwargs: msg),
+		):
+			with self.assertRaises(frappe.ValidationError):
+				connection.test_shopify_connection()
+
+		mocked_mark.assert_called_once()
+
 	def test_get_shopify_access_token_uses_cached_client_credentials_token(self):
 		cache = {}
 
