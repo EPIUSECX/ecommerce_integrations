@@ -55,6 +55,11 @@ def _migrate_items_to_ecommerce_item(log):
 
 	for field in shopify_fields:
 		if not frappe.db.exists({"doctype": "Custom Field", "fieldname": field}):
+			frappe.db.set_value(SETTING_DOCTYPE, SETTING_DOCTYPE, "is_old_data_migrated", 1)
+			log.status = "Success"
+			log.message = _("No old Shopify connector fields were found. Migration skipped.")
+			log.save(ignore_permissions=True)
+			frappe.db.commit()
 			return
 
 	items = _get_items_to_migrate()
@@ -64,12 +69,15 @@ def _migrate_items_to_ecommerce_item(log):
 	except Exception:
 		log.status = "Error"
 		log.traceback = frappe.get_traceback()
-		log.save()
+		log.save(ignore_permissions=True)
+		frappe.db.commit()
 		return
 
 	frappe.db.set_value(SETTING_DOCTYPE, SETTING_DOCTYPE, "is_old_data_migrated", 1)
 	log.status = "Success"
-	log.save()
+	log.message = _("Migrated {0} Shopify-linked ERPNext items from the old connector.").format(len(items))
+	log.save(ignore_permissions=True)
+	frappe.db.commit()
 
 
 def _get_items_to_migrate() -> list[_dict]:

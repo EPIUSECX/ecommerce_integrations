@@ -70,7 +70,6 @@ frappe.ui.form.on("Shopify Setting", {
 			frappe.set_route("shopify-import-products");
 		});
 		frm.add_custom_button(__("Export Products"), () => {
-			const item_group_child_doctype = "Shopify Item Group";
 			const get_item_groups = () => {
 				return (frm.doc.item_group_exporting || [])
 					.map((row) => row.item_group)
@@ -105,40 +104,37 @@ frappe.ui.form.on("Shopify Setting", {
 					},
 				});
 			};
-			frappe.model.with_doctype(item_group_child_doctype, () => {
-				const dialog = new frappe.ui.Dialog({
-					title: __("Confirm Products to Export"),
-					fields: [
-						{
-							fieldname: "item_groups",
-							fieldtype: "Table MultiSelect",
-							label: __("Item Groups"),
-							options: item_group_child_doctype,
-							reqd: 1,
+			const dialog = new frappe.ui.Dialog({
+				title: __("Confirm Products to Export"),
+				fields: [
+					{
+						fieldname: "item_groups",
+						fieldtype: "MultiSelectPills",
+						label: __("Item Groups"),
+						reqd: 1,
+						get_data(txt) {
+							return frappe.db.get_link_options("Item Group", txt, {
+								is_group: 0,
+							});
 						},
-					],
-					primary_action_label: __("Export"),
-					primary_action(values) {
-						const item_groups = (values.item_groups || [])
-							.map((row) => row.item_group)
-							.filter(Boolean);
-
-						set_item_groups(item_groups);
-						dialog.hide();
-						frm.save().then(() => start_export(item_groups));
 					},
-				});
+				],
+				primary_action_label: __("Export"),
+				primary_action(values) {
+					const item_groups = (values.item_groups || []).filter(Boolean);
 
-				dialog.show();
-				dialog.set_value(
-					"item_groups",
-					get_item_groups().map((item_group) => ({ item_group })),
-				);
+					set_item_groups(item_groups);
+					dialog.hide();
+					frm.save().then(() => start_export(item_groups));
+				},
 			});
+
+			dialog.show();
+			dialog.set_value("item_groups", get_item_groups());
 		});
 		frm.add_custom_button(__("View Logs"), () => {
 			frappe.set_route("List", "Ecommerce Integration Log", {
-				integration: "Shopify",
+				integration: "shopify",
 			});
 		});
 		frm.trigger("setup_queries");

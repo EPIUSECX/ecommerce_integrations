@@ -18,6 +18,7 @@ from ecommerce_integrations.shopify.constants import (
 	WEBHOOK_EVENTS,
 	SUPPLIER_ID_FIELD,
 )
+from ecommerce_integrations.shopify.utils import _migrate_items_to_ecommerce_item
 
 from .shopify_setting import setup_custom_fields
 
@@ -86,3 +87,24 @@ class TestShopifySetting(IntegrationTestCase):
 			setting._handle_webhooks()
 
 		self.assertEqual({row.method for row in setting.webhooks}, set(WEBHOOK_EVENTS))
+
+	def test_old_connector_migration_completes_when_old_fields_are_missing(self):
+		frappe.db.delete("Custom Field", {"fieldname": ("in", ["shopify_product_id", "shopify_variant_id"])})
+		frappe.db.set_value("Shopify Setting", "Shopify Setting", "is_old_data_migrated", 0)
+		log = frappe.get_doc(
+			{
+				"doctype": "Ecommerce Integration Log",
+				"integration": "shopify",
+				"status": "Queued",
+				"method": "ecommerce_integrations.shopify.utils.migrate_from_old_connector",
+			}
+		).insert(ignore_permissions=True)
+
+		_migrate_items_to_ecommerce_item(log)
+
+		log.reload()
+		self.assertEqual(log.status, "Success")
+		self.assertEqual(
+			frappe.db.get_value("Shopify Setting", "Shopify Setting", "is_old_data_migrated"),
+			1,
+		)

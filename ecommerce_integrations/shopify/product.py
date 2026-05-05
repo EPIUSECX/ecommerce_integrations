@@ -621,18 +621,26 @@ def export_all_products(item_groups=None):
 		)
 		setting.save(ignore_permissions=True)
 
+	export_log = create_shopify_log(
+		status="Queued",
+		method="ecommerce_integrations.shopify.product.queue_export_all_products",
+		message=_("Queued ERPNext product export to Shopify."),
+	)
+
 	frappe.enqueue(
 		queue_export_all_products,
 		queue="long",
 		job_name=EXPORT_PRODUCTS_JOB_NAME,
 		enqueue_after_commit=True,
+		export_log=export_log.name,
 	)
 
 	return {"queued": True}
 
 
-def queue_export_all_products():
+def queue_export_all_products(export_log=None):
 	start_time = process_time()
+	_update_export_log(export_log, "Started", _("Exporting ERPNext products to Shopify."))
 	setting = frappe.get_doc(SETTING_DOCTYPE)
 	item_names = _get_items_for_export(setting)
 	total_items = len(item_names)
@@ -643,7 +651,9 @@ def queue_export_all_products():
 	_publish_export(f"Queued {total_items} ERPNext items for Shopify export.")
 
 	if not total_items:
-		_publish_export(_("No ERPNext items matched the current Shopify export settings."), done=True)
+		message = _("No ERPNext items matched the current Shopify export settings.")
+		_publish_export(message, done=True)
+		_update_export_log(export_log, "Success", message)
 		return True
 
 	savepoint = "shopify_product_export"
@@ -697,10 +707,17 @@ def queue_export_all_products():
 
 	frappe.db.commit()
 	end_time = process_time()
+	message = _("Done in {0}s. Exported {1}, skipped {2}, errors {3}.").format(
+		end_time - start_time,
+		success_count,
+		skipped_count,
+		error_count,
+	)
 	_publish_export(
-		f"🎉 Done in {end_time - start_time}s. Exported {success_count}, skipped {skipped_count}, errors {error_count}.",
+		message,
 		done=True,
 	)
+	_update_export_log(export_log, "Success", message)
 	return True
 
 
@@ -755,6 +772,18 @@ def _publish_export(message, error=False, done=False, br=True):
 			"done": done,
 		},
 	)
+
+
+def _update_export_log(log_name: str | None, status: str, message: str | None = None) -> None:
+	if not log_name:
+		return
+
+	values = {"status": status}
+	if message:
+		values["message"] = message
+
+	frappe.db.set_value("Ecommerce Integration Log", log_name, values, update_modified=True)
+	frappe.db.commit()
 
 
 def _safe_rollback(savepoint: str) -> None:
