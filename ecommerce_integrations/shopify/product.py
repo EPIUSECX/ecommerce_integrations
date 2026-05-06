@@ -3,7 +3,7 @@ from typing import Optional
 
 import frappe
 from frappe import _, msgprint
-from frappe.utils import cint, cstr
+from frappe.utils import cint, cstr, strip_html
 from frappe.utils.nestedset import get_root_of
 from pyactiveresource.connection import ClientError
 from shopify.resources import Product, Variant
@@ -23,6 +23,8 @@ from ecommerce_integrations.shopify.constants import (
 from ecommerce_integrations.shopify.utils import create_shopify_log
 
 EXPORT_ITEM_DELAY_SECONDS = 1.1
+MAX_EXPORT_ERROR_REASONS = 10
+MAX_EXPORT_ERROR_ITEMS = 5
 
 
 class ShopifyProduct:
@@ -593,6 +595,7 @@ def write_upload_log(status: bool, product: Product, item, action="Created") -> 
 	if not status:
 		msg = _("Failed to upload item to Shopify") + "<br>"
 		msg += _("Shopify reported errors:") + " " + ", ".join(product.errors.full_messages())
+		frappe.flags.shopify_last_upload_error = msg
 		msgprint(msg, title="Note", indicator="orange")
 
 		create_shopify_log(
@@ -663,6 +666,7 @@ def queue_export_all_products(export_log=None, item_groups=None):
 	success_count = 0
 	error_count = 0
 	skipped_count = 0
+	error_details = {}
 
 	_publish_export(f"Queued {total_items} ERPNext items for Shopify export.")
 
@@ -682,12 +686,15 @@ def queue_export_all_products(export_log=None, item_groups=None):
 			before_sync = _is_item_synced(item)
 			_publish_export(f"Exporting {item_name} ({index}/{total_items})", br=False)
 			frappe.db.savepoint(savepoint)
+			_clear_last_upload_error()
 			upload_result = upload_erpnext_item(item)
 			after_sync = _is_item_synced(item)
 
 			if upload_result is False:
 				error_count += 1
-				_publish_export(f"Failed to export {item_name}. Check item-level Shopify log.", error=True)
+				reason = _get_last_upload_error() or _("Check item-level Shopify log.")
+				_record_export_error(error_details, item_name, reason)
+				_publish_export(f"Failed to export {item_name}: {reason}", error=True)
 			elif upload_result is None or (
 				before_sync == after_sync and not setting.update_shopify_item_on_update
 			):
@@ -708,14 +715,17 @@ def queue_export_all_products(export_log=None, item_groups=None):
 				sleep(retry_after + 0.5)
 				try:
 					frappe.db.savepoint(savepoint)
+					_clear_last_upload_error()
 					upload_result = upload_erpnext_item(frappe.get_doc("Item", item_name))
 					if upload_result:
 						success_count += 1
 						_publish_export(f"Exported {item_name} after retry", br=False)
 					elif upload_result is False:
 						error_count += 1
+						reason = _get_last_upload_error() or _("Check item-level Shopify log.")
+						_record_export_error(error_details, item_name, reason)
 						_publish_export(
-							f"Failed to export {item_name} after retry. Check item-level Shopify log.",
+							f"Failed to export {item_name} after retry: {reason}",
 							error=True,
 						)
 					else:
@@ -726,14 +736,17 @@ def queue_export_all_products(export_log=None, item_groups=None):
 				except Exception as retry_exc:
 					error_count += 1
 					_safe_rollback(savepoint)
+					_record_export_error(error_details, item_name, retry_exc)
 					_publish_export(f"Error exporting {item_name}: {retry_exc!s}", error=True)
 					continue
 			error_count += 1
+			_record_export_error(error_details, item_name, exc)
 			_publish_export(f"Error exporting {item_name}: {exc!s}", error=True)
 			continue
 		except Exception as exc:
 			error_count += 1
 			_safe_rollback(savepoint)
+			_record_export_error(error_details, item_name, exc)
 			_publish_export(f"Error exporting {item_name}: {exc!s}", error=True)
 			continue
 
@@ -748,6 +761,7 @@ def queue_export_all_products(export_log=None, item_groups=None):
 		skipped_count,
 		error_count,
 	)
+	message += _format_export_error_summary(error_details)
 	_publish_export(
 		message,
 		done=True,
@@ -806,6 +820,49 @@ def _is_item_synced(item) -> bool:
 	)
 
 
+def _clear_last_upload_error() -> None:
+	frappe.flags.shopify_last_upload_error = None
+
+
+def _get_last_upload_error() -> str:
+	return _clean_export_error(getattr(frappe.flags, "shopify_last_upload_error", None))
+
+
+def _record_export_error(error_details: dict, item_name: str, reason) -> None:
+	reason = _clean_export_error(reason)
+	if not reason:
+		reason = _("Unknown error")
+
+	detail = error_details.setdefault(reason, {"count": 0, "items": []})
+	detail["count"] += 1
+	if len(detail["items"]) < MAX_EXPORT_ERROR_ITEMS:
+		detail["items"].append(item_name)
+
+
+def _clean_export_error(reason) -> str:
+	reason = strip_html(cstr(reason)).strip()
+	return " ".join(reason.split())
+
+
+def _format_export_error_summary(error_details: dict) -> str:
+	if not error_details:
+		return ""
+
+	lines = ["", _("Error reasons:")]
+	for index, (reason, detail) in enumerate(error_details.items()):
+		if index >= MAX_EXPORT_ERROR_REASONS:
+			remaining = len(error_details) - MAX_EXPORT_ERROR_REASONS
+			lines.append(_("... and {0} more unique error reason(s).").format(remaining))
+			break
+
+		items = ", ".join(detail["items"])
+		if detail["count"] > len(detail["items"]):
+			items = _("{0}, and {1} more").format(items, detail["count"] - len(detail["items"]))
+		lines.append(_("{0} item(s): {1}. Example item(s): {2}").format(detail["count"], reason, items))
+
+	return "<br>".join(lines)
+
+
 def _publish_export(message, error=False, done=False, br=True):
 	frappe.publish_realtime(
 		EXPORT_PRODUCTS_REALTIME_KEY,
@@ -824,9 +881,15 @@ def _update_export_log(log_name: str | None, status: str, message: str | None = 
 	values = {"status": status}
 	if message:
 		values["message"] = message
+		values["title"] = _get_export_log_title(message)
 
 	frappe.db.set_value("Ecommerce Integration Log", log_name, values, update_modified=True)
 	frappe.db.commit()
+
+
+def _get_export_log_title(message: str) -> str:
+	title = strip_html(message)
+	return title if len(title) < 100 else title[:100] + "..."
 
 
 def _safe_rollback(savepoint: str) -> None:
