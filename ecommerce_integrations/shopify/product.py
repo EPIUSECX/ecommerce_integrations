@@ -1,3 +1,4 @@
+import re
 from time import process_time, sleep
 from typing import Optional
 
@@ -25,6 +26,7 @@ from ecommerce_integrations.shopify.utils import create_shopify_log
 EXPORT_ITEM_DELAY_SECONDS = 1.1
 MAX_EXPORT_ERROR_REASONS = 10
 MAX_EXPORT_ERROR_ITEMS = 5
+SHOPIFY_PRODUCT_NOT_FOUND_PATTERN = re.compile(r"Not Found: .*/products/\d+\.json")
 
 
 class ShopifyProduct:
@@ -367,7 +369,7 @@ def get_item_code(shopify_item):
 
 
 @temp_shopify_session
-def upload_erpnext_item(doc, method=None):
+def upload_erpnext_item(doc, method=None, retry_stale_shopify_link=True):
 	"""This hook is called when inserting new or updating existing `Item`.
 
 	New items are pushed to shopify and changes to existing items are
@@ -470,7 +472,18 @@ def upload_erpnext_item(doc, method=None):
 		write_upload_log(status=is_successful, product=product, item=item)
 		return is_successful
 	elif setting.update_shopify_item_on_update:
-		product = Product.find(product_id)
+		try:
+			product = Product.find(product_id)
+		except ClientError as exc:
+			if retry_stale_shopify_link and _is_shopify_product_not_found(exc):
+				_remove_stale_shopify_product_links(product_id)
+				return upload_erpnext_item(
+					doc,
+					method=method,
+					retry_stale_shopify_link=False,
+				)
+			raise
+
 		if product:
 			map_erpnext_item_to_shopify(shopify_product=product, erpnext_item=template_item)
 			if not item.variant_of:
@@ -541,6 +554,22 @@ def map_erpnext_variant_to_shopify_variant(shopify_product: Product, erpnext_ite
 		if not variant_product_id:
 			msgprint(_("Shopify: Couldn't sync item variant."))
 	return variant_product_id
+
+
+def _remove_stale_shopify_product_links(product_id: str) -> None:
+	stale_ecommerce_items = frappe.get_all(
+		"Ecommerce Item",
+		filters={"integration": MODULE_NAME, "integration_item_code": product_id},
+		pluck="name",
+	)
+
+	for ecommerce_item_name in stale_ecommerce_items:
+		frappe.delete_doc(
+			"Ecommerce Item",
+			ecommerce_item_name,
+			ignore_permissions=True,
+			force=True,
+		)
 
 
 def map_erpnext_item_to_shopify(shopify_product: Product, erpnext_item):
@@ -736,12 +765,18 @@ def queue_export_all_products(export_log=None, item_groups=None):
 				except Exception as retry_exc:
 					error_count += 1
 					_safe_rollback(savepoint)
-					_record_export_error(error_details, item_name, retry_exc)
-					_publish_export(f"Error exporting {item_name}: {retry_exc!s}", error=True)
+					reason = (
+						_get_client_error_reason(retry_exc)
+						if isinstance(retry_exc, ClientError)
+						else _clean_export_error(retry_exc)
+					)
+					_record_export_error(error_details, item_name, reason)
+					_publish_export(f"Error exporting {item_name}: {reason}", error=True)
 					continue
 			error_count += 1
-			_record_export_error(error_details, item_name, exc)
-			_publish_export(f"Error exporting {item_name}: {exc!s}", error=True)
+			reason = _get_client_error_reason(exc)
+			_record_export_error(error_details, item_name, reason)
+			_publish_export(f"Error exporting {item_name}: {reason}", error=True)
 			continue
 		except Exception as exc:
 			error_count += 1
@@ -837,6 +872,22 @@ def _record_export_error(error_details: dict, item_name: str, reason) -> None:
 	detail["count"] += 1
 	if len(detail["items"]) < MAX_EXPORT_ERROR_ITEMS:
 		detail["items"].append(item_name)
+
+
+def _get_client_error_reason(exc: ClientError) -> str:
+	reason = _clean_export_error(exc)
+	if _is_shopify_product_not_found(exc):
+		return _(
+			"Linked Shopify product was not found. ERPNext has an Ecommerce Item link for this item, "
+			"but Shopify returned 404. The stale link was removed and the item will be retried as a "
+			"new Shopify product."
+		)
+
+	return reason
+
+
+def _is_shopify_product_not_found(exc: ClientError) -> bool:
+	return bool(SHOPIFY_PRODUCT_NOT_FOUND_PATTERN.search(_clean_export_error(exc)))
 
 
 def _clean_export_error(reason) -> str:
