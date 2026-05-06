@@ -151,8 +151,8 @@ class TestProduct(TestCase):
 		)
 
 		self.assertEqual(filters["item_group"], ["in", ["Sub Assemblies"]])
+		self.assertEqual(filters["has_variants"], 0)
 		self.assertEqual(filters["variant_of"], ["is", "not set"])
-		self.assertNotIn("has_variants", filters)
 
 	def test_export_filters_include_leaf_items_when_variant_export_is_enabled(self):
 		filters = _get_item_export_filters(

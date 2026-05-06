@@ -363,7 +363,7 @@ def get_item_code(shopify_item):
 
 
 @temp_shopify_session
-def upload_erpnext_item(doc, method=None, allow_template=False):
+def upload_erpnext_item(doc, method=None):
 	"""This hook is called when inserting new or updating existing `Item`.
 
 	New items are pushed to shopify and changes to existing items are
@@ -382,7 +382,7 @@ def upload_erpnext_item(doc, method=None, allow_template=False):
 	if frappe.flags.in_import:
 		return None
 
-	if item.has_variants and not allow_template:
+	if item.has_variants:
 		return None
 
 	if len(item.attributes) > 3:
@@ -680,7 +680,7 @@ def queue_export_all_products(export_log=None, item_groups=None):
 			before_sync = _is_item_synced(item)
 			_publish_export(f"Exporting {item_name} ({index}/{total_items})", br=False)
 			frappe.db.savepoint(savepoint)
-			upload_result = upload_erpnext_item(item, allow_template=True)
+			upload_result = upload_erpnext_item(item)
 			after_sync = _is_item_synced(item)
 
 			if upload_result is False:
@@ -706,9 +706,7 @@ def queue_export_all_products(export_log=None, item_groups=None):
 				sleep(retry_after)
 				try:
 					frappe.db.savepoint(savepoint)
-					upload_result = upload_erpnext_item(
-						frappe.get_doc("Item", item_name), allow_template=True
-					)
+					upload_result = upload_erpnext_item(frappe.get_doc("Item", item_name))
 					if upload_result:
 						success_count += 1
 						_publish_export(f"Exported {item_name} after retry", br=False)
@@ -770,10 +768,8 @@ def _get_items_for_export(setting, item_groups=None) -> list[str]:
 
 
 def _get_item_export_filters(setting, item_groups: list[str]) -> dict:
-	filters = {"item_group": ["in", item_groups]}
-	if setting.upload_variants_as_items:
-		filters["has_variants"] = 0
-	else:
+	filters = {"item_group": ["in", item_groups], "has_variants": 0}
+	if not setting.upload_variants_as_items:
 		filters["variant_of"] = ["is", "not set"]
 
 	return filters
