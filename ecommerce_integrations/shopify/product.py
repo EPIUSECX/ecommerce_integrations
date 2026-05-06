@@ -22,6 +22,8 @@ from ecommerce_integrations.shopify.constants import (
 )
 from ecommerce_integrations.shopify.utils import create_shopify_log
 
+EXPORT_ITEM_DELAY_SECONDS = 1.1
+
 
 class ShopifyProduct:
 	def __init__(
@@ -694,7 +696,7 @@ def queue_export_all_products(export_log=None, item_groups=None):
 			else:
 				success_count += 1
 				_publish_export(f"Exported {item_name}", br=False)
-			sleep(0.6)
+			sleep(EXPORT_ITEM_DELAY_SECONDS)
 		except ClientError as exc:
 			_safe_rollback(savepoint)
 			retry_after = _extract_retry_after_seconds(exc)
@@ -703,7 +705,7 @@ def queue_export_all_products(export_log=None, item_groups=None):
 					f"Shopify rate limit hit while exporting {item_name}. Retrying after {retry_after}s...",
 					error=True,
 				)
-				sleep(retry_after)
+				sleep(retry_after + 0.5)
 				try:
 					frappe.db.savepoint(savepoint)
 					upload_result = upload_erpnext_item(frappe.get_doc("Item", item_name))
@@ -719,7 +721,7 @@ def queue_export_all_products(export_log=None, item_groups=None):
 					else:
 						skipped_count += 1
 						_publish_export(f"Skipped {item_name} after retry.", br=False)
-					sleep(0.6)
+					sleep(EXPORT_ITEM_DELAY_SECONDS)
 					continue
 				except Exception as retry_exc:
 					error_count += 1

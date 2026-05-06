@@ -27,6 +27,14 @@ class TestShopifyOAuthHelpers(unittest.TestCase):
 		err = requests.HTTPError(response=resp)
 		self.assertFalse(connection._is_shopify_unauthorized_error(err))
 
+	def test_is_shopify_unauthorized_false_for_shopify_rate_limit(self):
+		err = SimpleNamespace(
+			response=SimpleNamespace(code=429),
+			__str__=lambda self: 'Response(code=429, body="Exceeded 2 calls per second")',
+		)
+
+		self.assertFalse(connection._is_shopify_unauthorized_error(err))
+
 	def test_get_shopify_redirect_uri_strips_internal_port(self):
 		from ecommerce_integrations.shopify.oauth import _get_shopify_redirect_uri
 

@@ -9,7 +9,6 @@ import frappe
 import requests
 from frappe import _
 from frappe.utils import password
-from frappe.utils import cstr
 from frappe.exceptions import DuplicateEntryError, UniqueValidationError
 from shopify.resources import Webhook
 from shopify.session import Session
@@ -177,11 +176,21 @@ def _is_shopify_unauthorized_error(exc: BaseException) -> bool:
 	except Exception:
 		frappe.clear_last_message()
 
+	return _get_shopify_error_code(exc) == 401
+
+
+def _get_shopify_error_code(exc: BaseException) -> int | None:
 	resp = getattr(exc, "response", None)
-	code = getattr(resp, "status_code", None) if resp is not None else None
-	if code == 401:
-		return True
-	return "401" in cstr(exc)
+	code = (
+		getattr(resp, "status_code", None)
+		or getattr(resp, "code", None)
+		or getattr(exc, "code", None)
+	)
+
+	try:
+		return int(code) if code is not None else None
+	except (TypeError, ValueError):
+		return None
 
 
 def temp_shopify_session(func):
