@@ -1,9 +1,15 @@
 # Copyright (c) 2021, Frappe and Contributors
 # See LICENSE
 
+from types import SimpleNamespace
+
 import frappe
 
-from ecommerce_integrations.shopify.product import ShopifyProduct, sync_product_from_shopify
+from ecommerce_integrations.shopify.product import (
+	ShopifyProduct,
+	_get_item_export_filters,
+	sync_product_from_shopify,
+)
 
 from .utils import TestCase
 
@@ -137,6 +143,26 @@ class TestProduct(TestCase):
 
 		product = ShopifyProduct(product_id="6732194021530", variant_id="39933951901850")
 		self.assertFalse(product.is_synced())
+
+	def test_export_filters_include_top_level_items_when_variant_export_is_disabled(self):
+		filters = _get_item_export_filters(
+			SimpleNamespace(upload_variants_as_items=0),
+			["Sub Assemblies"],
+		)
+
+		self.assertEqual(filters["item_group"], ["in", ["Sub Assemblies"]])
+		self.assertEqual(filters["variant_of"], ["is", "not set"])
+		self.assertNotIn("has_variants", filters)
+
+	def test_export_filters_include_leaf_items_when_variant_export_is_enabled(self):
+		filters = _get_item_export_filters(
+			SimpleNamespace(upload_variants_as_items=1),
+			["Sub Assemblies"],
+		)
+
+		self.assertEqual(filters["item_group"], ["in", ["Sub Assemblies"]])
+		self.assertEqual(filters["has_variants"], 0)
+		self.assertNotIn("variant_of", filters)
 
 
 def create_item_attributes():

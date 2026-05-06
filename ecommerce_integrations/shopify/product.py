@@ -363,7 +363,7 @@ def get_item_code(shopify_item):
 
 
 @temp_shopify_session
-def upload_erpnext_item(doc, method=None):
+def upload_erpnext_item(doc, method=None, allow_template=False):
 	"""This hook is called when inserting new or updating existing `Item`.
 
 	New items are pushed to shopify and changes to existing items are
@@ -372,26 +372,26 @@ def upload_erpnext_item(doc, method=None):
 	template_item = item = doc  # alias for readability
 	# a new item recieved from ecommerce_integrations is being inserted
 	if item.flags.from_integration:
-		return
+		return None
 
 	setting = frappe.get_doc(SETTING_DOCTYPE)
 
 	if not setting.is_enabled() or not setting.upload_erpnext_items:
-		return
+		return None
 
 	if frappe.flags.in_import:
-		return
+		return None
 
-	if item.has_variants:
-		return
+	if item.has_variants and not allow_template:
+		return None
 
 	if len(item.attributes) > 3:
 		msgprint(_("Template items/Items with 4 or more attributes can not be uploaded to Shopify."))
-		return
+		return None
 
 	if doc.variant_of and not setting.upload_variants_as_items:
 		msgprint(_("Enable variant sync in setting to upload item to Shopify."))
-		return
+		return None
 
 	if item.variant_of:
 		template_item = frappe.get_doc("Item", item.variant_of)
@@ -464,6 +464,7 @@ def upload_erpnext_item(doc, method=None):
 				ecom_item.insert()
 
 		write_upload_log(status=is_successful, product=product, item=item)
+		return is_successful
 	elif setting.update_shopify_item_on_update:
 		product = Product.find(product_id)
 		if product:
@@ -501,6 +502,9 @@ def upload_erpnext_item(doc, method=None):
 				map_erpnext_variant_to_shopify_variant(product, item, variant_attributes)
 
 			write_upload_log(status=is_successful, product=product, item=item, action="Updated")
+			return is_successful
+
+	return None
 
 
 def map_erpnext_variant_to_shopify_variant(shopify_product: Product, erpnext_item, variant_attributes):
@@ -614,17 +618,26 @@ def export_all_products(item_groups=None):
 	if not setting.upload_erpnext_items:
 		frappe.throw(_("Enable 'Upload new ERPNext Items to Shopify' before exporting products."))
 
+	selected_item_groups = None
 	if item_groups is not None:
+		selected_item_groups = _normalize_item_groups(item_groups)
 		setting.set(
 			"item_group_exporting",
-			[{"item_group": item_group} for item_group in _normalize_item_groups(item_groups)],
+			[{"item_group": item_group} for item_group in selected_item_groups],
 		)
 		setting.save(ignore_permissions=True)
+	else:
+		selected_item_groups = _get_export_item_groups(setting)
+
+	if not selected_item_groups:
+		frappe.throw(_("Select at least one Item Group to export."))
 
 	export_log = create_shopify_log(
 		status="Queued",
 		method="ecommerce_integrations.shopify.product.queue_export_all_products",
-		message=_("Queued ERPNext product export to Shopify."),
+		message=_("Queued ERPNext product export to Shopify for item groups: {0}.").format(
+			", ".join(selected_item_groups) or _("None")
+		),
 	)
 
 	frappe.enqueue(
@@ -633,16 +646,17 @@ def export_all_products(item_groups=None):
 		job_name=EXPORT_PRODUCTS_JOB_NAME,
 		enqueue_after_commit=True,
 		export_log=export_log.name,
+		item_groups=selected_item_groups,
 	)
 
 	return {"queued": True}
 
 
-def queue_export_all_products(export_log=None):
+def queue_export_all_products(export_log=None, item_groups=None):
 	start_time = process_time()
 	_update_export_log(export_log, "Started", _("Exporting ERPNext products to Shopify."))
 	setting = frappe.get_doc(SETTING_DOCTYPE)
-	item_names = _get_items_for_export(setting)
+	item_names = _get_items_for_export(setting, item_groups=item_groups)
 	total_items = len(item_names)
 	success_count = 0
 	error_count = 0
@@ -651,7 +665,10 @@ def queue_export_all_products(export_log=None):
 	_publish_export(f"Queued {total_items} ERPNext items for Shopify export.")
 
 	if not total_items:
-		message = _("No ERPNext items matched the current Shopify export settings.")
+		selected_item_groups = _normalize_item_groups(item_groups) or _get_export_item_groups(setting)
+		message = _("No ERPNext items matched the selected Shopify export item groups: {0}.").format(
+			", ".join(selected_item_groups) or _("None")
+		)
 		_publish_export(message, done=True)
 		_update_export_log(export_log, "Success", message)
 		return True
@@ -663,43 +680,61 @@ def queue_export_all_products(export_log=None):
 			before_sync = _is_item_synced(item)
 			_publish_export(f"Exporting {item_name} ({index}/{total_items})", br=False)
 			frappe.db.savepoint(savepoint)
-			upload_erpnext_item(item)
+			upload_result = upload_erpnext_item(item, allow_template=True)
 			after_sync = _is_item_synced(item)
 
-			if before_sync == after_sync and not setting.update_shopify_item_on_update:
+			if upload_result is False:
+				error_count += 1
+				_publish_export(f"Failed to export {item_name}. Check item-level Shopify log.", error=True)
+			elif upload_result is None or (
+				before_sync == after_sync and not setting.update_shopify_item_on_update
+			):
 				skipped_count += 1
 				_publish_export(f"Skipped {item_name}; already synced.", br=False)
 			else:
 				success_count += 1
-				_publish_export(f"✅ Exported {item_name}", br=False)
+				_publish_export(f"Exported {item_name}", br=False)
 			sleep(0.6)
 		except ClientError as exc:
-			error_count += 1
 			_safe_rollback(savepoint)
 			retry_after = _extract_retry_after_seconds(exc)
 			if retry_after:
 				_publish_export(
-					f"⏳ Shopify rate limit hit while exporting {item_name}. Retrying after {retry_after}s...",
+					f"Shopify rate limit hit while exporting {item_name}. Retrying after {retry_after}s...",
 					error=True,
 				)
 				sleep(retry_after)
 				try:
 					frappe.db.savepoint(savepoint)
-					upload_erpnext_item(frappe.get_doc("Item", item_name))
-					success_count += 1
-					_publish_export(f"✅ Exported {item_name} after retry", br=False)
+					upload_result = upload_erpnext_item(
+						frappe.get_doc("Item", item_name), allow_template=True
+					)
+					if upload_result:
+						success_count += 1
+						_publish_export(f"Exported {item_name} after retry", br=False)
+					elif upload_result is False:
+						error_count += 1
+						_publish_export(
+							f"Failed to export {item_name} after retry. Check item-level Shopify log.",
+							error=True,
+						)
+					else:
+						skipped_count += 1
+						_publish_export(f"Skipped {item_name} after retry.", br=False)
 					sleep(0.6)
 					continue
 				except Exception as retry_exc:
+					error_count += 1
 					_safe_rollback(savepoint)
-					_publish_export(f"❌ Error exporting {item_name}: {retry_exc!s}", error=True)
+					_publish_export(f"Error exporting {item_name}: {retry_exc!s}", error=True)
 					continue
-			_publish_export(f"❌ Error exporting {item_name}: {exc!s}", error=True)
+			error_count += 1
+			_publish_export(f"Error exporting {item_name}: {exc!s}", error=True)
 			continue
 		except Exception as exc:
 			error_count += 1
 			_safe_rollback(savepoint)
-			_publish_export(f"❌ Error exporting {item_name}: {exc!s}", error=True)
+			_publish_export(f"Error exporting {item_name}: {exc!s}", error=True)
 			continue
 
 		if index % 20 == 0:
@@ -717,21 +752,31 @@ def queue_export_all_products(export_log=None):
 		message,
 		done=True,
 	)
-	_update_export_log(export_log, "Success", message)
+	_update_export_log(export_log, "Error" if error_count else "Success", message)
 	return True
 
 
-def _get_items_for_export(setting) -> list[str]:
-	item_groups = _get_export_item_groups(setting)
+def _get_items_for_export(setting, item_groups=None) -> list[str]:
+	item_groups = _normalize_item_groups(item_groups) or _get_export_item_groups(setting)
 	if not item_groups:
 		return []
 
-	filters = {"has_variants": 0}
-	if not setting.upload_variants_as_items:
-		filters["variant_of"] = ["is", "not set"]
-	filters["item_group"] = ["in", item_groups]
+	return frappe.db.get_all(
+		"Item",
+		filters=_get_item_export_filters(setting, item_groups),
+		pluck="name",
+		order_by="modified asc",
+	)
 
-	return frappe.db.get_all("Item", filters=filters, pluck="name", order_by="modified asc")
+
+def _get_item_export_filters(setting, item_groups: list[str]) -> dict:
+	filters = {"item_group": ["in", item_groups]}
+	if setting.upload_variants_as_items:
+		filters["has_variants"] = 0
+	else:
+		filters["variant_of"] = ["is", "not set"]
+
+	return filters
 
 
 def _get_export_item_groups(setting) -> list[str]:

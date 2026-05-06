@@ -122,6 +122,10 @@ frappe.ui.form.on("Shopify Setting", {
 				primary_action_label: __("Export"),
 				primary_action(values) {
 					const item_groups = (values.item_groups || []).filter(Boolean);
+					if (!item_groups.length) {
+						frappe.msgprint(__("Select at least one Item Group to export."));
+						return;
+					}
 
 					set_item_groups(item_groups);
 					dialog.hide();
