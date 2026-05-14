@@ -1,10 +1,12 @@
 # Copyright (c) 2026, Frappe and contributors
 # For license information, please see LICENSE
 
+import json
+
 import frappe
 from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
 from frappe import _
-from frappe.utils import cint, cstr
+from frappe.utils import cint, cstr, flt
 
 from ecommerce_integrations.shopify.constants import (
 	ORDER_ID_FIELD,
@@ -51,7 +53,8 @@ def sync_refund(payload, request_id=None):
 		cn.set(SHOPIFY_REFUND_ID_FIELD, refund_id)
 		refund_line_items = refund.get("refund_line_items") or []
 		if refund_line_items and frappe.get_meta("Sales Invoice Item").has_field(SHOPIFY_LINE_ITEM_ID_FIELD):
-			_apply_refund_line_items_to_return(cn, refund_line_items)
+			_apply_refund_line_items_to_return(cn, refund_line_items, getattr(setting, "shipping_item", None))
+		_apply_refunded_shipping_to_return(cn, refund, setting)
 		cn.flags.ignore_mandatory = True
 		cn.insert(ignore_permissions=True)
 		cn.submit()
@@ -61,7 +64,7 @@ def sync_refund(payload, request_id=None):
 		create_shopify_log(status="Success")
 
 
-def _apply_refund_line_items_to_return(cn, refund_line_items: list) -> None:
+def _apply_refund_line_items_to_return(cn, refund_line_items: list, shipping_item: str | None = None) -> None:
 	"""Adjust return quantities from Shopify refund line items (partial refunds)."""
 	by_line = {
 		str(r.get("line_item_id")): cint(r.get("quantity"))
@@ -73,6 +76,9 @@ def _apply_refund_line_items_to_return(cn, refund_line_items: list) -> None:
 
 	rows_to_remove = []
 	for row in list(cn.items):
+		if shipping_item and row.item_code == shipping_item:
+			continue
+
 		si_item = row.get("sales_invoice_item")
 		if not si_item:
 			rows_to_remove.append(row)
@@ -87,3 +93,86 @@ def _apply_refund_line_items_to_return(cn, refund_line_items: list) -> None:
 		cn.remove(row)
 
 	cn.run_method("calculate_taxes_and_totals")
+
+
+def _apply_refunded_shipping_to_return(cn, refund: dict, setting) -> None:
+	"""Remove copied Shopify shipping charges unless the refund includes shipping."""
+	if _has_refunded_shipping(refund):
+		return
+
+	shipping_item = getattr(setting, "shipping_item", None)
+	if shipping_item:
+		for row in list(cn.items):
+			if row.item_code == shipping_item:
+				cn.remove(row)
+
+	_remove_shipping_taxes(cn, shipping_item)
+	cn.run_method("calculate_taxes_and_totals")
+
+
+def _has_refunded_shipping(refund: dict) -> bool:
+	for shipping_line in refund.get("refund_shipping_lines") or []:
+		if _get_money_amount(shipping_line, "subtotal_amount", "amount"):
+			return True
+
+	for adjustment in refund.get("order_adjustments") or []:
+		kind = cstr(adjustment.get("kind")).lower()
+		if kind in {"shipping_refund", "refund_shipping"} and _get_adjustment_amount(adjustment):
+			return True
+
+	return False
+
+
+def _get_adjustment_amount(adjustment: dict) -> float:
+	return abs(_get_money_amount(adjustment, "amount"))
+
+
+def _get_money_amount(row: dict, *fields: str) -> float:
+	for field in fields:
+		amount = flt(row.get(field))
+		if amount:
+			return abs(amount)
+
+		amount_set = row.get(f"{field}_set") or {}
+		shop_money = amount_set.get("shop_money") or {}
+		amount = flt(shop_money.get("amount"))
+		if amount:
+			return abs(amount)
+
+	amount_set = row.get("amount_set") or {}
+	shop_money = amount_set.get("shop_money") or {}
+	return abs(flt(shop_money.get("amount")))
+
+
+def _remove_shipping_taxes(cn, shipping_item: str | None) -> None:
+	for tax in list(cn.get("taxes") or []):
+		tax_detail = _get_item_wise_tax_detail(tax)
+		if not tax_detail:
+			if tax.charge_type == "Actual":
+				cn.remove(tax)
+			continue
+
+		if shipping_item and shipping_item in tax_detail:
+			tax_detail.pop(shipping_item, None)
+			if tax_detail:
+				tax.item_wise_tax_detail = json.dumps(tax_detail)
+				tax.tax_amount = _sum_item_wise_tax_amount(tax_detail)
+			else:
+				cn.remove(tax)
+
+
+def _get_item_wise_tax_detail(tax) -> dict:
+	tax_detail = tax.get("item_wise_tax_detail")
+	if isinstance(tax_detail, dict):
+		return tax_detail.copy()
+	if not tax_detail:
+		return {}
+	return frappe.parse_json(tax_detail) or {}
+
+
+def _sum_item_wise_tax_amount(tax_detail: dict) -> float:
+	total = 0
+	for detail in tax_detail.values():
+		if isinstance(detail, list) and len(detail) > 1:
+			total += flt(detail[1])
+	return total
