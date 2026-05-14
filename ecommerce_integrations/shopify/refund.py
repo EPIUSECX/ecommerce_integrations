@@ -106,7 +106,7 @@ def _apply_refunded_shipping_to_return(cn, refund: dict, setting) -> None:
 			if row.item_code == shipping_item:
 				cn.remove(row)
 
-	_remove_shipping_taxes(cn, shipping_item)
+	_remove_shipping_taxes(cn, setting)
 	cn.run_method("calculate_taxes_and_totals")
 
 
@@ -144,11 +144,17 @@ def _get_money_amount(row: dict, *fields: str) -> float:
 	return abs(flt(shop_money.get("amount")))
 
 
-def _remove_shipping_taxes(cn, shipping_item: str | None) -> None:
+def _remove_shipping_taxes(cn, setting) -> None:
+	shipping_item = getattr(setting, "shipping_item", None)
+	shipping_account = getattr(setting, "default_shipping_charges_account", None)
+
 	for tax in list(cn.get("taxes") or []):
 		tax_detail = _get_item_wise_tax_detail(tax)
 		if not tax_detail:
-			if tax.charge_type == "Actual":
+			is_shipping_charge = (
+				tax.charge_type == "Actual" and shipping_account and tax.account_head == shipping_account
+			)
+			if is_shipping_charge:
 				cn.remove(tax)
 			continue
 
